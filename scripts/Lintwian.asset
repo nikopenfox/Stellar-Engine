@@ -1,0 +1,65 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c258878425f625f449c73fd98b3513f8, type: 3}
+  m_Name: Lintwian
+  m_EditorClassIdentifier: 
+  minLength: 490
+  maxLength: 1450
+  tempPresets:
+  - name: 619
+    teff: 619
+    visibleLightRatio: 0
+    color: {r: 0.46540874, g: 0, b: 0, a: 1}
+  - name: 798
+    teff: 798
+    visibleLightRatio: 0.0014
+    color: {r: 0.81761, g: 0.30474555, b: 0, a: 1}
+  - name: 1000
+    teff: 1000
+    visibleLightRatio: 0.01008
+    color: {r: 1, g: 0.51520526, b: 0.1415093, a: 1}
+  - name: 1300
+    teff: 1300
+    visibleLightRatio: 0.05
+    color: {r: 1, g: 0.6844536, b: 0.22327036, a: 1}
+  - name: 2000
+    teff: 2000
+    visibleLightRatio: 0.25
+    color: {r: 1, g: 0.8675617, b: 0.31132066, a: 1}
+  - name: 3500
+    teff: 3500
+    visibleLightRatio: 0.613
+    color: {r: 1, g: 0.98681045, b: 0.95283014, a: 1}
+  - name: 5000
+    teff: 5000
+    visibleLightRatio: 0.667
+    color: {r: 0.7254902, g: 0.9330678, b: 1, a: 1}
+  - name: 5800
+    teff: 5800
+    visibleLightRatio: 0.637
+    color: {r: 0.63836473, g: 0.8620076, b: 1, a: 1}
+  - name: 6500
+    teff: 6500
+    visibleLightRatio: 0.586
+    color: {r: 0.45490193, g: 0.7542148, b: 1, a: 1}
+  - name: 10000
+    teff: 10000
+    visibleLightRatio: 0.3451
+    color: {r: 0.3238992, g: 0.55510473, b: 1, a: 1}
+  - name: 30000
+    teff: 30000
+    visibleLightRatio: 0.031
+    color: {r: 0.24213827, g: 0.39034227, b: 1, a: 1}
+  - name: 100000
+    teff: 100000
+    visibleLightRatio: 0.0011
+    color: {r: 0.24313726, g: 0.39215687, b: 1, a: 1}

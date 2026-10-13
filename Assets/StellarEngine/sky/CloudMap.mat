@@ -1,0 +1,171 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: CloudMap
+  m_Shader: {fileID: 4800000, guid: 8a60f94ef9a2fd84e8b66a39643cc673, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords:
+  - _SUNDISK_HIGH_QUALITY
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: 3000
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BrightStars:
+        m_Texture: {fileID: 2800000, guid: d33fe822d098d1445b0f8b29aeda47fc, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _BumpMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Day:
+        m_Texture: {fileID: 2800000, guid: baceb17e40637ca48b46204a5218d1ea, type: 3}
+        m_Scale: {x: 1, y: 0.5}
+        m_Offset: {x: 0, y: 0.5}
+    - _DetailAlbedoMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _DetailMask:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _DetailNormalMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _DimStars:
+        m_Texture: {fileID: 2800000, guid: b43fcb460c04a07459c16b228e1aa238, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _EmissionMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MainTex:
+        m_Texture: {fileID: 2800000, guid: 203db506bf0d65943905099ce8f1af1c, type: 3}
+        m_Scale: {x: 2.5, y: 3}
+        m_Offset: {x: 0, y: 0}
+    - _MetallicGlossMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MidStars:
+        m_Texture: {fileID: 2800000, guid: 1e13e0964201c5a4f81bca16be70525b, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Night:
+        m_Texture: {fileID: 2800000, guid: a8cf770e509186f47a3a1c6241dc621c, type: 3}
+        m_Scale: {x: 0.5, y: 0.5}
+        m_Offset: {x: 0, y: 1.5}
+    - _OcclusionMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _ParallaxMap:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _StarBright:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Twilight:
+        m_Texture: {fileID: 2800000, guid: eacc989a57855e844972668ebec6a274, type: 3}
+        m_Scale: {x: 0.5, y: 0.5}
+        m_Offset: {x: 0, y: 1.5}
+    - _day:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _night:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _starBright:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _twilight:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AtmosphereThickness: 1.03
+    - _Blend: 0
+    - _Brightness: 1
+    - _BumpScale: 1
+    - _ColorMask: 15
+    - _Coverage: 0.2
+    - _Cutoff: 0.5
+    - _DetailNormalMapScale: 1
+    - _DstBlend: 0
+    - _Exposure: 0.97
+    - _GlossMapScale: 1
+    - _Glossiness: 0.5
+    - _GlossyReflections: 1
+    - _Metallic: 0
+    - _Mode: 0
+    - _OcclusionStrength: 1
+    - _Parallax: 0.02
+    - _SmoothnessTextureChannel: 0
+    - _SpecularHighlights: 1
+    - _SrcBlend: 1
+    - _StarBrightness: 1
+    - _Stencil: 0
+    - _StencilComp: 8
+    - _StencilOp: 0
+    - _StencilReadMask: 255
+    - _StencilWriteMask: 255
+    - _SunDisk: 2
+    - _SunSize: 0.019
+    - _SunSizeConvergence: 1
+    - _UVSec: 0
+    - _UseUIAlphaClip: 0
+    - _WindSpeed: 0.7
+    - _WindSpeedX: 100
+    - _ZWrite: 1
+    - _atmOpacity: 1
+    - _brightness: 10000
+    - _customDepthMul: 0.001
+    - _dayBlend: 1
+    - _exposure: 1
+    - _fwdScatterMultiplier: 0.3
+    - _haze: 0.25
+    - _intensity: 0
+    - _nightBlend: 0
+    - _opacity: 0
+    - _twilightBlend: 0
+    - sa_b: 100
+    - sl_b: 100
+    m_Colors:
+    - _Color: {r: 1, g: 1, b: 1, a: 1}
+    - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
+    - _GroundColor: {r: 0.84340674, g: 1, b: 0.77672946, a: 1}
+    - _LightColor: {r: 0.7152595, g: 0.52313155, b: 0.44616798, a: 1}
+    - _LightVector: {r: -1, g: 0, b: 0, a: 0}
+    - _SkyTint: {r: 0.63522005, g: 0.63522005, b: 0.63522005, a: 1}
+    - _Specular: {r: 0, g: 0, b: 0, a: 0}
+    - _Tint: {r: 1, g: 1, b: 1, a: 1}
+    - _WindVector: {r: 1, g: 0, b: 0, a: 0}
+    - _colorVary: {r: 1, g: 1, b: 1, a: 1}
+    - _emissive: {r: 1, g: 1, b: 1, a: 1}
+    - _fwdScatterColor: {r: 1, g: 0.46226406, b: 0.6138079, a: 1}
+    - _fwdScatterColorDay: {r: 1, g: 1, b: 1, a: 1}
+    - _horizonColor: {r: 1, g: 0.16080059, b: 0, a: 1}
+  m_BuildTextureStacks: []

@@ -1,0 +1,221 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25a58ae1e3c3e514aad04d8662f20307, type: 3}
+  m_Name: TRAPPIST-1
+  m_EditorClassIdentifier: 
+  starDatas:
+  - name: TRAPPIST-1
+    nameJP: 
+    specClass: 
+    mass: 0.0898
+    rad: 0.1192
+    teff: 2566
+    lum: 0.000553
+    isUseSolarUnit: 1
+  planetDatas:
+  - name: TRAPPIST-1b
+    nameJP: 
+    tex: {fileID: 2800000, guid: c314283c9da57fd47aad138e809f8780, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0116
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 31
+    mass: 1.3771
+    rad: 1.116
+    albedoGeom: 0.17900000512599945
+    albedoBond: 0.1720000058412552
+    hapke: 0.3009999990463257
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1c
+    nameJP: 
+    tex: {fileID: 2800000, guid: bc16ae21e75e7b14a8a13e33804ab8d2, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0158
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 11
+    mass: 1.3105
+    rad: 1.097
+    albedoGeom: 0.21199999749660492
+    albedoBond: 0.20800000429153442
+    hapke: 0.3930000066757202
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1d
+    nameJP: 
+    tex: {fileID: 2800000, guid: baceb17e40637ca48b46204a5218d1ea, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0222
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 79
+    mass: 0.3885
+    rad: 0.778
+    albedoGeom: 0.3009999990463257
+    albedoBond: 0.3009999990463257
+    hapke: 0.3009999990463257
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1e
+    nameJP: 
+    tex: {fileID: 2800000, guid: eaa251effda62874da51d495525765d9, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0292
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    mass: 0.6392
+    rad: 0.92
+    albedoGeom: 0.28999999165534973
+    albedoBond: 0.296999990940094
+    hapke: 0.3009999990463257
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1f
+    nameJP: 
+    tex: {fileID: 2800000, guid: d7a1b69fc1fff98449c9cd3416086da1, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0385
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 105
+    mass: 1.041
+    rad: 1.045
+    albedoGeom: 0.43700000643730164
+    albedoBond: 0.40400001406669617
+    hapke: 0.4480000138282776
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1g
+    nameJP: 
+    tex: {fileID: 2800000, guid: 37c619ea34932a946a4872e594e60ad8, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0469
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 225
+    mass: 1.32
+    rad: 1.13
+    albedoGeom: 0.6330000162124634
+    albedoBond: 0.6140000224113464
+    hapke: 0.4740000069141388
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: TRAPPIST-1h
+    nameJP: 
+    tex: {fileID: 2800000, guid: 37c619ea34932a946a4872e594e60ad8, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    semiMajorAxis: 0.0619
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 334
+    mass: 0.326
+    rad: 0.755
+    albedoGeom: 0.8029999732971191
+    albedoBond: 0.7919999957084656
+    hapke: 0.5889999866485596
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  testFloat: 0
