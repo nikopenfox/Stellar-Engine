@@ -44,15 +44,19 @@ public class StarSystemAsset : ScriptableObject
         [Tooltip("テクスチャ平均色")] public Color texMeanColor = Color.white;
         [Tooltip("軌道長半径の入力タイプ")] public SMAType smaInputType;
         [Tooltip("質量と半径の入力タイプ")] public MassRadiusType mrInputType = MassRadiusType.earth;
-        [Tooltip("光源にするか")] public bool isUseLight;
+        [Tooltip("光源にするか")] public bool isUseLight = true;
 
         [Header("軌道特性")]
         [Tooltip("主星の名前")] public string parentBody;
         [Tooltip("主星以外で光源として使う恒星")] public string[] lightReferenceBodys;
+        [Tooltip("遮蔽判定(食)を行うか")] public bool isUseOcclusion = true;
+        [Tooltip("遮蔽判定する天体 (未設定なら、衛星は主星、惑星は半径が最大の衛星)")] public string[] occluderBodys;
         [Tooltip("軌道長半径")] public double semiMajorAxis; //km
         [Tooltip("離心率")] public double eccentricity; //離心率
         [Tooltip("軌道傾斜角")] public double inclination; //軌道傾斜角
         [Tooltip("近点引数"), Range(0, 360)] public double argOfPeri; //近点引数
+        [Tooltip("公転周期の入力タイプ")] public PeriodType periodInputType = PeriodType.day;
+        [Tooltip("公転周期 (0なら軌道長半径と質量から計算)")] public double orbitalPeriod;
 
 
 
@@ -61,6 +65,11 @@ public class StarSystemAsset : ScriptableObject
         [Tooltip("半径")] public double rad; //km
         [Tooltip("アルベド(可視光)"), Range(0, 1)] public double albedoGeom;
         [Tooltip("アルベド(全波長)"), Range(0, 1)] public double albedoBond;
+        [Tooltip("自転周期の入力タイプ")] public PeriodType rotationPeriodInputType = PeriodType.hour;
+        [Tooltip("自転周期")] public double rotationPeriod;
+        [Tooltip("潮汐固定 (自転周期を公転周期に合わせ、主星に同じ面を向ける。自転周期の入力は無視)")] public bool isTidalLock;
+        [Tooltip("赤道傾斜角"), Range(-180, 180)] public double obliquity = 0;
+
 
         [Header("表面の特性")]
         [Tooltip("塵の量"), Range(0,1)] public double hapke;
@@ -81,6 +90,14 @@ public class StarSystemAsset : ScriptableObject
     {
         [InspectorName("天文単位:AU")] au,
         [InspectorName("キロメートル:km")] km
+    }
+
+    //公転周期の入力モード
+    public enum PeriodType
+    {
+        [InspectorName("時")] hour,
+        [InspectorName("日")] day,
+        [InspectorName("年(365.25日)")] year
     }
 
     public enum MassRadiusType

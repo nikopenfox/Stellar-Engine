@@ -48,6 +48,12 @@ public class StarSystemImporter : MonoBehaviour
     private double RADIUS_EARTH = 6371d;
     private double RADIUS_MOON = 1737.4d;
 
+    //公転周期の定数
+    private double GRAVITY = 6.6743E-20d; //万有引力定数(km^3/kg/s^2)
+    private double HOUR2SEC = 3600d;
+    private double DAY2SEC = 86400d;
+    private double YEAR2DAY = 365.25d;
+
     // Start is called before the first frame update
 
     void OnApplicationQuit()
@@ -251,6 +257,9 @@ public class StarSystemImporter : MonoBehaviour
                 pl.isLightRefSet = true;
             }
 
+            //光源名からタイプ(0:恒星 1:惑星)とインデックスを求める
+            ResolveLightSources(pl);
+
 
 
             /*
@@ -273,6 +282,19 @@ public class StarSystemImporter : MonoBehaviour
 
             */
             pl.argOfPeri = planetData.argOfPeri;
+            pl.eccentricity = planetData.eccentricity;
+            pl.inclination = planetData.inclination;
+
+            //公転周期(秒) 0以下ならすべての天体を読んだ後に軌道長半径と質量から求める
+            pl.orbitalPeriod = PeriodToSeconds(planetData.orbitalPeriod, planetData.periodInputType);
+
+            //自転周期(秒) 0なら自転しない、負なら逆行
+            pl.rotationPeriod = PeriodToSeconds(planetData.rotationPeriod, planetData.rotationPeriodInputType);
+            pl.isTidalLock = planetData.isTidalLock;
+
+            //遮蔽判定(食)。天体名の解決と既定値の設定は、すべての天体を読んだ後に行う(衛星の半径が要るため)
+            pl.isUseOcclusion = planetData.isUseOcclusion;
+            pl.occluderBodyName = planetData.occluderBodys;
 
 
             //スケーリング
@@ -348,6 +370,27 @@ public class StarSystemImporter : MonoBehaviour
         stars = starsTmp.ToArray();
         planets = planetsTmp.ToArray();
 
+        //公転周期が設定されていない天体は、主星の質量から求める
+        foreach (var planet in planets)
+        {
+            if (planet.orbitalPeriod <= 0)
+            {
+                planet.orbitalPeriod = CalcOrbitalPeriod(planet);
+            }
+
+            //潮汐固定なら自転周期 = 公転周期
+            if (planet.isTidalLock)
+            {
+                planet.rotationPeriod = planet.orbitalPeriod;
+            }
+        }
+
+        //遮蔽する天体を求める
+        foreach (var planet in planets)
+        {
+            ResolveOccluders(planet);
+        }
+
 
         //Managerに移す
 
@@ -417,10 +460,12 @@ public class StarSystemImporter : MonoBehaviour
         manager.parentIndex_planet = new int[planets.Length];
         manager.lightSourceType_planet = new int[planets.Length][];
         manager.lightSourceIndex_planet = new int[planets.Length][];
+        manager.occluderIndex_planet = new int[planets.Length][];
         manager.semiMajorAxis_planet = new double[planets.Length];
         manager.eccentricity_planet = new double[planets.Length];
         manager.inclination_planet = new double[planets.Length];
         manager.argOfPeri_planet = new double[planets.Length];
+        manager.orbitalPeriod_planet = new double[planets.Length];
 
         manager.isLanded = new bool[planets.Length];
         manager.position_planet = new Vector3[planets.Length];
@@ -434,7 +479,8 @@ public class StarSystemImporter : MonoBehaviour
 
         manager.rotation_planet = new Quaternion[planets.Length];
         manager.rotationAxis_planet = new float[planets.Length];
-        manager.rotationPeriod_planet = new float[planets.Length];
+        manager.rotationPeriod_planet = new double[planets.Length];
+        manager.isTidalLock_planet = new bool[planets.Length];
         manager.yawing_planet = new float[planets.Length];
         manager.view_rotation_planetUnity = new Quaternion[planets.Length];
 
@@ -449,7 +495,9 @@ public class StarSystemImporter : MonoBehaviour
         manager.isUseLight = new bool[planets.Length];
         manager.appDiameter_planet = new double[planets.Length];
         manager.lightObj_planet = new Light[planets.Length];
-        manager.view_lightDir_planet = new Vector3[planets.Length];
+        manager.view_lightDir_planet = new Vector3[planets.Length][];
+        manager.lightSourceColor_planet = new Color[planets.Length][];
+        manager.lightSourceRatio_planet = new float[planets.Length][];
         manager.albedoGeom = new double[planets.Length];
         manager.hapke = new float[planets.Length];
         manager.appMagn_planet = new double[planets.Length];
@@ -480,14 +528,30 @@ public class StarSystemImporter : MonoBehaviour
             manager.parentType_planet[i] = planet.parentType;
             manager.parentIndex_planet[i] = planet.parentIndex;
 
-            if (!planet.isLightRefSet)
-            {
+            //光源リスト
+            manager.lightSourceType_planet[i] = (int[])planet.lightSourceType.Clone();
+            manager.lightSourceIndex_planet[i] = (int[])planet.lightSourceIndex.Clone();
 
+            //遮蔽する天体
+            manager.occluderIndex_planet[i] = (int[])planet.occluderIndex.Clone();
+
+            //光源ごとの方向・色・明るさ比(値はManagerがランタイムで計算する)
+            //シェーダーに渡せる数を超える光源は使わない
+            int lightSourceCount = Mathf.Min(planet.lightSourceType.Length, StarSystemManager.MAX_LIGHT_SOURCE);
+            if (planet.lightSourceType.Length > StarSystemManager.MAX_LIGHT_SOURCE)
+            {
+                Debug.LogWarning(planet.name + " の光源が" + StarSystemManager.MAX_LIGHT_SOURCE + "個を超えているため、先頭の" + StarSystemManager.MAX_LIGHT_SOURCE + "個だけを使います");
             }
+            manager.view_lightDir_planet[i] = new Vector3[lightSourceCount];
+            manager.lightSourceColor_planet[i] = new Color[lightSourceCount];
+            manager.lightSourceRatio_planet[i] = new float[lightSourceCount];
 
             manager.semiMajorAxis_planet[i] = planet.semiMajorAxis;
             manager.eccentricity_planet[i] = planet.eccentricity;
             manager.argOfPeri_planet[i] = planet.argOfPeri;
+            manager.orbitalPeriod_planet[i] = planet.orbitalPeriod;
+            manager.rotationPeriod_planet[i] = planet.rotationPeriod;
+            manager.isTidalLock_planet[i] = planet.isTidalLock;
             Debug.Log("argofperi" + planet.argOfPeri);
 
             manager.mass_planet[i] = planet.mass;
@@ -563,6 +627,46 @@ public class StarSystemImporter : MonoBehaviour
     /// <param name="parentName"></param>
     /// <param name="parentIndex"></param>
     /// <returns></returns>
+    //入力タイプに応じて周期を秒に換算する
+    private double PeriodToSeconds(double value, PeriodType type)
+    {
+        switch (type)
+        {
+            case PeriodType.hour:
+                return value * HOUR2SEC;
+            case PeriodType.year:
+                return value * YEAR2DAY * DAY2SEC;
+            default:
+                return value * DAY2SEC;
+        }
+    }
+
+    //ケプラーの第3法則 T = 2π√(a^3 / G(M+m)) で公転周期(秒)を求める
+    //軌道長半径はscale倍、質量はscale^3倍されているので、スケーリング後の値のまま計算しても周期は変わらない
+    private double CalcOrbitalPeriod(Planet planet)
+    {
+        double parentMass = 0;
+        switch (planet.parentType)
+        {
+            case PlanetParentTypes.Star:
+                if (planet.parentIndex >= 0 && planet.parentIndex < stars.Length) { parentMass = stars[planet.parentIndex].mass; }
+                break;
+            case PlanetParentTypes.Planet:
+                if (planet.parentIndex >= 0 && planet.parentIndex < planets.Length) { parentMass = planets[planet.parentIndex].mass; }
+                break;
+        }
+
+        double totalMass = parentMass + planet.mass;
+        if (planet.semiMajorAxis <= 0 || totalMass <= 0)
+        {
+            Debug.LogWarning(planet.name + " の公転周期を求められないため、公転させません (軌道長半径と主星の質量を確認してください)");
+            return 0;
+        }
+
+        double a = planet.semiMajorAxis;
+        return 2 * System.Math.PI * System.Math.Sqrt(a * a * a / (GRAVITY * totalMass));
+    }
+
     public PlanetParentTypes SearchParent(string parentName, out int parentIndex)
     {
         bool isFound = false;
@@ -609,7 +713,7 @@ public class StarSystemImporter : MonoBehaviour
         }
 
         Debug.Log(name + "は見つかりませんでした");
-        return 0;
+        return -1;
     }
 
     private int FindPlanetIndex(string name)
@@ -624,7 +728,7 @@ public class StarSystemImporter : MonoBehaviour
         }
 
         Debug.Log(name + "は見つかりませんでした");
-        return 0;
+        return -1;
 
     }
 
@@ -657,37 +761,129 @@ public class StarSystemImporter : MonoBehaviour
     {
         PlanetParentTypes curType = type;
         int curIndex = index;
-        string parentName = "";
-        //親のタイプとインデックスを見つけ、さらに検索する
-        for (int i = level; i >= 0; i--)
+        //levelの数だけ親をたどる(恒星より上の親はないので、恒星に着いたら止める)
+        for (int i = 0; i < level; i++)
         {
-            parentName = SearchParentName(curType, curIndex);
-            //親のタイプを検索
-
-            for (int j = 0; j < asset.starDatas.Count; j++)
+            if (curType != PlanetParentTypes.Planet)
             {
-                if (asset.starDatas[j].name == parentName)
-                {
-                    curType = PlanetParentTypes.Star;
-                    curIndex = j;
-                    break;
-                }
+                break;
             }
 
-            for (int j = 0; j < asset.planetDatas.Count; j++)
+            string parentBody = asset.planetDatas[curIndex].parentBody;
+
+            int idx = FindStarIndex(parentBody);
+            if (idx != -1)
             {
-                if (asset.planetDatas[j].name == parentName)
-                {
-                    curType = PlanetParentTypes.Planet;
-                    curIndex = j;
-                    break;
-                }
+                curType = PlanetParentTypes.Star;
+                curIndex = idx;
+                continue;
             }
 
+            idx = FindPlanetIndex(parentBody);
+            if (idx != -1)
+            {
+                curType = PlanetParentTypes.Planet;
+                curIndex = idx;
+                continue;
+            }
+
+            //見つからない場合はSearchParentと同じく星系の主星にフォールバック
+            curType = asset.starDatas.Count != 0 ? PlanetParentTypes.Star : PlanetParentTypes.Planet;
+            curIndex = 0;
         }
 
-        return parentName;
-        
+        return SearchParentName(curType, curIndex);
+    }
+
+    /// <summary>
+    /// lightSourceBodyName から lightSourceType(0:恒星 1:惑星) と lightSourceIndex を求める。見つからない天体は光源から除外する。
+    /// </summary>
+    /// <param name="pl">対象の惑星</param>
+    private void ResolveLightSources(Planet pl)
+    {
+        var names = new List<string>();
+        var types = new List<int>();
+        var indexes = new List<int>();
+
+        foreach (var bodyName in pl.lightSourceBodyName)
+        {
+            int idx = FindStarIndex(bodyName);
+            if (idx != -1)
+            {
+                names.Add(bodyName);
+                types.Add((int)PlanetParentTypes.Star);
+                indexes.Add(idx);
+                continue;
+            }
+
+            idx = FindPlanetIndex(bodyName);
+            if (idx != -1)
+            {
+                names.Add(bodyName);
+                types.Add((int)PlanetParentTypes.Planet);
+                indexes.Add(idx);
+                continue;
+            }
+
+            Debug.LogWarning(pl.name + " の光源「" + bodyName + "」が見つからないため、光源から除外しました");
+        }
+
+        pl.lightSourceBodyName = names.ToArray();
+        pl.lightSourceType = types.ToArray();
+        pl.lightSourceIndex = indexes.ToArray();
+    }
+
+    /// <summary>
+    /// occluderBodyName から遮蔽する天体(惑星番号)を求める。
+    /// 未設定なら、衛星は主星、惑星は半径が最大の衛星を使う。isUseOcclusion が false なら空にする。
+    /// </summary>
+    /// <param name="pl">対象の惑星</param>
+    private void ResolveOccluders(Planet pl)
+    {
+        var indexes = new List<int>();
+
+        if (!pl.isUseOcclusion)
+        {
+            pl.occluderIndex = indexes.ToArray();
+            return;
+        }
+
+        if (pl.occluderBodyName != null && pl.occluderBodyName.Length > 0)
+        {
+            foreach (var bodyName in pl.occluderBodyName)
+            {
+                int idx = FindPlanetIndex(bodyName);
+                if (idx == -1 || idx == pl.index)
+                {
+                    Debug.LogWarning(pl.name + " の遮蔽天体「" + bodyName + "」が惑星・衛星に見つからないため、除外しました");
+                    continue;
+                }
+                indexes.Add(idx);
+            }
+        }
+        else if (pl.parentType == PlanetParentTypes.Planet)
+        {
+            //衛星: 主星
+            if (pl.parentIndex != pl.index) { indexes.Add(pl.parentIndex); }
+        }
+        else
+        {
+            //惑星: 半径が最大の衛星
+            int largest = -1;
+            double largestRad = 0;
+            foreach (var moon in planets)
+            {
+                if (moon.parentType != PlanetParentTypes.Planet || moon.parentIndex != pl.index || moon.index == pl.index) { continue; }
+                if (largest == -1 || moon.rad > largestRad)
+                {
+                    largest = moon.index;
+                    largestRad = moon.rad;
+                }
+            }
+            if (largest != -1) { indexes.Add(largest); }
+        }
+
+        pl.occluderIndex = indexes.ToArray();
     }
 
 #endif

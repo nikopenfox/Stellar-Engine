@@ -10,7 +10,22 @@ Shader "Custom/CelestialRenderer_New"
         _brightness2 ("Brightness2", Float) = 1.0
         _surfaceB ("Surface Brightness", Float) = 1.0
         _lightColor ("Light Color", Color) = (1,1,1,1)
-        _lightVector ("Light Vector", Vector) = (0,0,0)
+        _lightVector ("Light Vector", Vector) = (0,0,0) //最も明るい光源(単一光源のシェーダー向け、このシェーダーでは未使用)
+
+        //複数光源(StarSystemManager.MAX_LIGHT_SOURCE と数を揃える)
+        _lightCount ("Light Count", Float) = 1
+        _lightVector0 ("Light Vector 0", Vector) = (1,0,0,0)
+        _lightVector1 ("Light Vector 1", Vector) = (0,0,0,0)
+        _lightVector2 ("Light Vector 2", Vector) = (0,0,0,0)
+        _lightVector3 ("Light Vector 3", Vector) = (0,0,0,0)
+        _lightColor0 ("Light Color 0", Color) = (1,1,1,1)
+        _lightColor1 ("Light Color 1", Color) = (1,1,1,1)
+        _lightColor2 ("Light Color 2", Color) = (1,1,1,1)
+        _lightColor3 ("Light Color 3", Color) = (1,1,1,1)
+        _lightIntensity0 ("Light Intensity 0", Float) = 1
+        _lightIntensity1 ("Light Intensity 1", Float) = 0
+        _lightIntensity2 ("Light Intensity 2", Float) = 0
+        _lightIntensity3 ("Light Intensity 3", Float) = 0
         _hapke ("Hapke", Float) = 0
         _oppFrac ("Opposition Frac", Float) = 1
 
@@ -32,6 +47,35 @@ Shader "Custom/CelestialRenderer_New"
     SubShader
     {
         Tags { "Queue" = "AlphaTest+60" "RenderType"="Opaque" }
+
+        //地表・大気の両パスで使う複数光源
+        CGINCLUDE
+            #define MAX_LIGHT_SOURCE 4
+
+            float _lightCount;
+            float4 _lightVector0, _lightVector1, _lightVector2, _lightVector3;
+            fixed4 _lightColor0, _lightColor1, _lightColor2, _lightColor3;
+            float _lightIntensity0, _lightIntensity1, _lightIntensity2, _lightIntensity3;
+
+            //k番目の光源の方向と色(明るさ込み)を取得する。使わない光源ならfalse
+            bool GetLightSource(int k, out float3 lightDir, out fixed3 lightCol)
+            {
+                float4 v = _lightVector0;
+                fixed4 c = _lightColor0;
+                float s = _lightIntensity0;
+                if (k == 1) { v = _lightVector1; c = _lightColor1; s = _lightIntensity1; }
+                else if (k == 2) { v = _lightVector2; c = _lightColor2; s = _lightIntensity2; }
+                else if (k == 3) { v = _lightVector3; c = _lightColor3; s = _lightIntensity3; }
+
+                lightDir = float3(0, 0, 1);
+                lightCol = 0;
+                if (k >= _lightCount || s <= 0 || dot(v.xyz, v.xyz) <= 0) { return false; }
+
+                lightDir = normalize(v.xyz);
+                lightCol = c.rgb * s;
+                return true;
+            }
+        ENDCG
 
         /*Blend OneMinusDstColor One
         ZTest LEqual
@@ -163,30 +207,33 @@ Shader "Custom/CelestialRenderer_New"
             fixed4 frag (v2f i, out float outDepth : SV_Depth) : SV_Target
             {
                 float3 normal = normalize(i.worldNormal);
-                float3 lightDir;
                 float3 worldPosCenter = normalize(mul(unity_ObjectToWorld, float4(0,0,0,1))); //惑星中心
                 //float3 lightDir = normalize(_WorldSpaceLightPos0.xyz);
-                
-                    // Directional Light
-                    lightDir = normalize(_lightVector.xyz);
-                
-                // sample the texture
-
-                
-                
-
-                //Diffuse
-
-                float ndotl = max(0, dot(normal, lightDir));
 
                 float ndotv = saturate(dot(normal, i.worldViewDir));
 
-                float ldotv = saturate(dot(lightDir, i.worldViewDir));
+                //Diffuse 光源ごとの拡散反射と衝効果を足し合わせる
+                fixed3 diffuse = 0;
+                fixed3 opposition = 0;
 
-                fixed3 diffuse = _lightColor.rgb * (_brightness + _hapke * 1.2) * 
+                [unroll]
+                for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+                {
+                    float3 lightDir;
+                    fixed3 lightCol;
+                    if (!GetLightSource(k, lightDir, lightCol)) { continue; }
+
+                    float ndotl = max(0, dot(normal, lightDir));
+
+                    float ldotv = saturate(dot(lightDir, i.worldViewDir));
+
+                    diffuse += lightCol * (_brightness + _hapke * 1.2) *
                                     lerp(saturate(ndotl), saturate((ndotl / (ndotl + ndotv + 0.2))), _hapke );
 
-                fixed opposition = _hapke * _hapke * _oppFrac * min(ndotl * 100, ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv);
+                    opposition += lightCol * _hapke * _hapke * _oppFrac * min(ndotl * 100, ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv * ldotv);
+                }
+
+                diffuse *= _lightColor.rgb;
 
                 fixed4 col = tex2D(_MainTex, i.uv);
                 fixed3 rgb = (diffuse + opposition) * col.rgb * _Color.rgb * _surfaceB * _brightness2;;
@@ -293,42 +340,19 @@ Shader "Custom/CelestialRenderer_New"
             fixed4 frag (v2f i, out float outDepth : SV_Depth) : SV_Target
             {
                 float3 normal = normalize(i.worldNormal);
-                float3 lightDir;
 
                 //大気減衰に必要な情報
                 float3 cameraPos = _WorldSpaceCameraPos;
                 float3 worldPosCenter = mul(unity_ObjectToWorld, float4(0,0,0,1)); //惑星中心
                 //float3 lightDir = normalize(_WorldSpaceLightPos0.xyz);
-                
-                    // Directional Light
-                    lightDir = normalize(_lightVector.xyz);
-                
-                // sample the texture
 
-                
-                
-
-                
-                //Diffuse計算
-                float ndotl = max(0, dot(normal, lightDir));
-                float ndotl2 = dot(normal, lightDir);
-                fixed3 diffuse = _lightColor.rgb * _brightness * ndotl;
+                //-----ここから視線のみで決まる値-----
 
                 //角度が浅いほど明るく
                 float ndotv = max(-1, dot(normal, i.worldViewDir) - 1);
                 float scatter = min(_atmScatter * 1, -ndotv * (_atmScatter * 3) + _atmScatter * _atmOpacity);
 
-                //レイリー散乱 -1して符号を反転し、0(薄明)で最大になるようにする
                 fixed atmMin = 0.001;
-                float pdotl = max(0, dot(normalize(i.worldPos - _WorldSpaceCameraPos), lightDir));
-                fixed reyleigh =  1 - (ndotl * ndotl * 30); 
-                fixed reyR = _atmReyleigh * reyleigh * (1 - _reyleighR);
-                fixed reyG = _atmReyleigh * reyleigh * (1 - _reyleighG);
-                fixed reyB = _atmReyleigh * reyleigh * (1 - _reyleighB);
-
-                fixed3 reyColor = normalize(fixed3(reyR + atmMin, reyG+ atmMin, reyB+ atmMin)) * _atmReyleighB;
-
-                float beta = reyColor * 0.01;
 
                 //大気減衰
                 float3 l = cameraPos - worldPosCenter; //中心から原点へのベクトル
@@ -356,45 +380,74 @@ Shader "Custom/CelestialRenderer_New"
                 // 惑星中心から見た視点位置を使い、太陽方向の視線で交差を求める
                 float3 l_sun = cameraPos - worldPosCenter; // カメラ→惑星中心ベクトル（lと同じ）
 
-                // 太陽方向ベクトルで大気球との交差
-                float b_sun = dot(lightDir, l_sun);
-                float discriminant_sun = b_sun * b_sun - (dot(l_sun, l_sun) - R * R);
-                float discriminantS_sun = b_sun * b_sun - (dot(l_sun, l_sun) - RSurf * RSurf);
+                //-----ここから光源ごとの値-----
+                //Blend SrcAlpha One なので、各光源の (色 × 不透明度) を足し合わせれば光源ごとに描いたのと同じになる
+                fixed3 atmColSum = 0;
+                float tauMax = -1e10;
 
-                float t1_sun = -b_sun - sqrt(max(0, discriminant_sun));
-                float t2_sun = min(
-                    -b_sun + sqrt(max(0, discriminant_sun)),
-                    -b_sun + sqrt(max(0, discriminantS_sun))
-                );
-                float path_sun = clamp((t2_sun - t1_sun) / (R - RSurf), 0.01, 1000);
+                [unroll]
+                for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+                {
+                    float3 lightDir;
+                    fixed3 lightCol;
+                    if (!GetLightSource(k, lightDir, lightCol)) { continue; }
 
-                // 視線方向と太陽方向、長い方を採用
-                float path = max(path_view, path_sun);
+                    //Diffuse計算
+                    float ndotl = max(0, dot(normal, lightDir));
+                    fixed3 diffuse = _lightColor.rgb * lightCol * _brightness * ndotl;
 
-                
+                    //レイリー散乱 -1して符号を反転し、0(薄明)で最大になるようにする
+                    float pdotl = max(0, dot(normalize(i.worldPos - _WorldSpaceCameraPos), lightDir));
+                    fixed reyleigh =  1 - (ndotl * ndotl * 30);
+                    fixed reyR = _atmReyleigh * reyleigh * (1 - _reyleighR);
+                    fixed reyG = _atmReyleigh * reyleigh * (1 - _reyleighG);
+                    fixed reyB = _atmReyleigh * reyleigh * (1 - _reyleighB);
 
-                
+                    fixed3 reyColor = normalize(fixed3(reyR + atmMin, reyG+ atmMin, reyB+ atmMin)) * _atmReyleighB;
 
-                float3 T_view = exp(-beta * path);
-                float3 T_sun  = exp(-beta * path * pdotl); 
-                float tau = (_atmScaleHeight * _atmHeight) * 1e-8 * path * path * path * path * path * path * path;
-                float tau2 = path;
+                    float beta = reyColor * 0.01;
 
-                clip(tau + 0.01);
+                    // 太陽方向ベクトルで大気球との交差
+                    float b_sun = dot(lightDir, l_sun);
+                    float discriminant_sun = b_sun * b_sun - (dot(l_sun, l_sun) - R * R);
+                    float discriminantS_sun = b_sun * b_sun - (dot(l_sun, l_sun) - RSurf * RSurf);
 
-                //前方散乱
+                    float t1_sun = -b_sun - sqrt(max(0, discriminant_sun));
+                    float t2_sun = min(
+                        -b_sun + sqrt(max(0, discriminant_sun)),
+                        -b_sun + sqrt(max(0, discriminantS_sun))
+                    );
+                    float path_sun = clamp((t2_sun - t1_sun) / (R - RSurf), 0.01, 1000);
 
-                float forward = pdotl * pdotl * pdotl * pdotl;
+                    // 視線方向と太陽方向、長い方を採用
+                    float path = max(path_view, path_sun);
 
-                float3 inScatter = forward * forward * diffuse * 20 * _atmForward;
-                float3 reyResult = reyColor * tau2 * diffuse;
+                    float3 T_view = exp(-beta * path);
+                    float3 T_sun  = exp(-beta * path * pdotl);
+                    float tau = (_atmScaleHeight * _atmHeight) * 1e-8 * path * path * path * path * path * path * path;
+                    float tau2 = path;
 
-                fixed3 atmCol = (diffuse * scatter + max(reyResult, 2 * reyResult * (inScatter * T_sun * T_view)) + inScatter ) * _atmColor.rgb * (_atmBrightness * 0.05) * _brightness * _brightness2;;
-                //fixed3 atmCol = (0.1,0.0001,0.001) * tau;
-                fixed4 atmColA = fixed4(atmCol, min(1,tau));
+                    tauMax = max(tauMax, tau);
+
+                    //前方散乱
+
+                    float forward = pdotl * pdotl * pdotl * pdotl;
+
+                    float3 inScatter = forward * forward * diffuse * 20 * _atmForward;
+                    float3 reyResult = reyColor * tau2 * diffuse;
+
+                    fixed3 atmCol = (diffuse * scatter + max(reyResult, 2 * reyResult * (inScatter * T_sun * T_view)) + inScatter ) * _atmColor.rgb * (_atmBrightness * 0.05) * _brightness * _brightness2;;
+                    //fixed3 atmCol = (0.1,0.0001,0.001) * tau;
+                    atmColSum += atmCol * min(1,tau);
+                }
+
+                //どの光源でも大気がなければ描かない
+                clip(tauMax + 0.01);
+
                 // apply fog
                 outDepth = i.vertex.z / i.vertex.w * _customDepthMul;
-                return atmColA * _Color * min(ndotv - 0.25, 0);
+                float viewFactor = min(ndotv - 0.25, 0);
+                return fixed4(atmColSum * _Color.rgb * viewFactor, _Color.a * viewFactor);
             }
             ENDCG
         }

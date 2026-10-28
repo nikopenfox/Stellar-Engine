@@ -18,6 +18,9 @@ public class StarSystemManager : UdonSharpBehaviour
     private const int BASEQUEUE = 2510; //最近傍天体のRenderQueue
     private const float BASEDEPTH = 0.0001f; //最遠天体の深度値
     private const float BASEDEPTH_INC = 0.00015f;
+    public const int MAX_LIGHT_SOURCE = 4; //惑星シェーダーに渡せる光源の最大数(シェーダー側のスロット数と揃える)
+    private const int KEPLER_ITERATION = 20; //ケプラー方程式の反復回数の上限
+    private const double TIDAL_LOCK_OFFSET = 90.0; //潮汐固定時、経度0で主星が天頂に来るためのヨーイングのずれ(度)
 
     public double scale, scaledAU;
     public double distUnity;
@@ -27,8 +30,31 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public GameObject cSphere;
     [Header("設定")]
     [SerializeField] private bool isRealTimeMode;
+    [SerializeField, Range(0f, 10f), Tooltip("視直径(分角)がこれ以下の天体はメッシュを描画しない (0で常に描画)")] private float meshCullDiameter = 1f;
     [SerializeField] private float updateInterval, lightUpdateInterval; //何秒ごとに更新するか
     private float time, L_time;
+
+    [Header("処理時間の計測")]
+    [SerializeField, Tooltip("FixedUpdate内の各処理の時間を計測してログに出す")] private bool debug_isProfile;
+    [SerializeField, Tooltip("ログを出す間隔(秒)")] private float debug_profileLogInterval = 5f;
+    private System.Diagnostics.Stopwatch debug_profileWatch;
+    private double debug_profileLogStart; //集計を始めた時刻(ms)
+    private double[] debug_profileSum; //区間ごとの合計時間(ms)
+    private int[] debug_profileCount; //区間ごとの呼び出し回数
+    private string[] debug_profileName;
+    //計測区間の番号
+    private const int PROF_TIME = 0;
+    private const int PROF_ORBIT = 1;
+    private const int PROF_PLANET = 2;
+    private const int PROF_STAR = 3;
+    private const int PROF_BODY_OTHER = 4;
+    private const int PROF_PLANET_LIGHT = 5;
+    private const int PROF_LIGHT = 6;
+    private const int PROF_ATM = 7;
+    private const int PROF_CLOUD = 8;
+    private const int PROF_STARMAP = 9;
+    private const int PROF_TOTAL = 10;
+    private const int PROF_NUM = 11;
 
     [Header("時間")]
     private const int YEAR2SEC = 31557600;
@@ -45,6 +71,7 @@ public class StarSystemManager : UdonSharpBehaviour
     private double MILLISEC = 0.001f;
     [SerializeField] private long sDate;
     [SerializeField] private string sDateText = "2000/1/1 12:00";
+    [SerializeField, Tooltip("時間の早送り倍率 (1で実時間、負の値で逆再生)")] private double timeFactor = 1d;
     [SerializeField] private double sDateResolution = 1d; //時間解像度
     private long sd_res; //その内部値
     private double nowDate;
@@ -132,6 +159,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public double ext_eccentricity_planet; //離心率
     public double ext_inclination_planet; //軌道傾斜角
     public double ext_argOfPeri_planet; //近点引数
+    public double ext_orbitalPeriod_planet; //公転周期(日)
 
 
     [Header("座標")]
@@ -212,11 +240,13 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public double[] eccentricity_planet; //離心率
     [HideInInspector] public double[] inclination_planet; //軌道傾斜角
     [HideInInspector] public double[] argOfPeri_planet; //近点引数
+    [HideInInspector] public double[] orbitalPeriod_planet; //公転周期(秒) 0なら公転しない
 
     [Header("自転のパラメータ")]
     [HideInInspector] public Quaternion[] rotation_planet;
     [HideInInspector] public float[] rotationAxis_planet;
-    [HideInInspector] public float[] rotationPeriod_planet;
+    [HideInInspector] public double[] rotationPeriod_planet; //自転周期(秒) 0なら自転しない、負なら逆行
+    [HideInInspector] public bool[] isTidalLock_planet; //潮汐固定(主星に同じ面を向ける)
     [HideInInspector] public float[] yawing_planet;
 
     [Header("座標")]
@@ -224,6 +254,9 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public int[] parentIndex_planet;
     [HideInInspector] public int[][] lightSourceType_planet;
     [HideInInspector] public int[][] lightSourceIndex_planet;
+    [HideInInspector] public int[][] occluderIndex_planet; //遮蔽判定(食)をする天体の惑星番号。i は惑星番号
+    [HideInInspector] public float[] occlusion_planet; //主星をたどった先の恒星の光が届いている割合(1:食なし 0:皆既)
+    [HideInInspector] public float[] occlusion_star; //観測者から見て恒星の円盤が見えている割合(1:食なし 0:皆既)
     [HideInInspector] public bool[] isLanded; 
     [HideInInspector] public Vector3[] position_planet;
     [HideInInspector] public Vector3[] positionRelative_planet;
@@ -249,7 +282,10 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public Color[] lightBaseColor_planet;
     [HideInInspector] public double[] appDiameter_planet;
     [HideInInspector] public Light[] lightObj_planet;
-    [HideInInspector] public Vector3[] view_lightDir_planet;
+    [HideInInspector] public Vector3[][] view_lightDir_planet; //[惑星][光源] 惑星から光源への方向
+    [HideInInspector] public Color[][] lightSourceColor_planet; //[惑星][光源] 光源の色
+    [HideInInspector] public float[][] lightSourceRatio_planet; //[惑星][光源] 最も明るい光源を1とした明るさの比
+    private string[] shaderProp_lightVector, shaderProp_lightColor, shaderProp_lightIntensity;
     [HideInInspector] public double[] albedoGeom;
     [HideInInspector] public float[] hapke;
     [HideInInspector] public double[] appMagn_planet;
@@ -277,6 +313,36 @@ public class StarSystemManager : UdonSharpBehaviour
 
     void OnValidate()
     {
+        //光源リストの確認用ログ
+        if (lightSourceType_planet == null || lightSourceIndex_planet == null)
+        {
+            Debug.Log("StE_LightSource: 光源リストが未初期化です");
+        }
+        else
+        {
+            for (int i = 0; i < lightSourceType_planet.Length; i++)
+            {
+                string planetName = (name_planet != null && i < name_planet.Length) ? name_planet[i] : "?";
+                int[] types = lightSourceType_planet[i];
+                int[] indexes = i < lightSourceIndex_planet.Length ? lightSourceIndex_planet[i] : null;
+
+                if (types == null || indexes == null)
+                {
+                    Debug.Log("StE_LightSource: [" + i + "] " + planetName + " : 光源リストが未設定です");
+                    continue;
+                }
+
+                string log = "StE_LightSource: [" + i + "] " + planetName + " :";
+                for (int j = 0; j < types.Length && j < indexes.Length; j++)
+                {
+                    //type 0:恒星 1:惑星
+                    string[] names = types[j] == 0 ? name_star : name_planet;
+                    string bodyName = (names != null && indexes[j] >= 0 && indexes[j] < names.Length) ? names[indexes[j]] : "?";
+                    log += " [" + j + "] type=" + types[j] + " index=" + indexes[j] + " (" + bodyName + ")";
+                }
+                Debug.Log(log);
+            }
+        }
 
 
         if (isDebug)
@@ -294,6 +360,7 @@ public class StarSystemManager : UdonSharpBehaviour
             debug_yawT.text = yawing.ToString() + "°";
         }
 
+        UpdateYawing(FindPlanetIndex(obs_body_name));
         RotationSet();
 
         if (isUseSystemMap)
@@ -371,7 +438,19 @@ public class StarSystemManager : UdonSharpBehaviour
 
     private void FixedUpdate()
     {
+        double profTotal = ProfileNow();
+        double prof = profTotal;
+
+        FixedUpdateBody(prof);
+
+        ProfileAdd(PROF_TOTAL, profTotal);
+        ProfileLog();
+    }
+
+    private void FixedUpdateBody(double prof)
+    {
         STimeUpdate();
+        prof = ProfileAdd(PROF_TIME, prof);
         //Debug.Log("now: " + sDateText);
         VRCPlayerApi player = Networking.LocalPlayer;
         playerPos = player.GetBonePosition(HumanBodyBones.Head);
@@ -403,7 +482,8 @@ public class StarSystemManager : UdonSharpBehaviour
             time = 0;
         }
 
-        
+        prof = ProfileNow();
+
 
         if (isDebug)
         {
@@ -452,7 +532,7 @@ public class StarSystemManager : UdonSharpBehaviour
             testRotation = Quaternion.Euler(testRotationEuler);
         }
 
-        
+        UpdateYawing(obs_body_index);
 
         RotationSet();
 
@@ -461,13 +541,17 @@ public class StarSystemManager : UdonSharpBehaviour
             StarSystemMapUpdate();
         }
 
-        
+        prof = ProfileAdd(PROF_BODY_OTHER, prof);
+
         PlanetPositionUpdate();
+        prof = ProfileAdd(PROF_ORBIT, prof);
         UpdatePlanet();
+        prof = ProfileAdd(PROF_PLANET, prof);
 
         UpdateStar();
+        prof = ProfileAdd(PROF_STAR, prof);
 
-        
+
 
         if (isExtractOnPlaymode)
         {
@@ -500,6 +584,8 @@ public class StarSystemManager : UdonSharpBehaviour
             obs_position = new Vector3(position_planet[obs_body_index].x, position_planet[obs_body_index].y, position_planet[obs_body_index].z);
         }
 
+        ProfileAddNoCount(PROF_BODY_OTHER, prof);
+
         //Light Module
 
         if (L_time < lightUpdateInterval)
@@ -515,17 +601,86 @@ public class StarSystemManager : UdonSharpBehaviour
         {
             UpdateDebug();
         }
+        prof = ProfileNow();
         UpdatePlanetLightning();
+        prof = ProfileAdd(PROF_PLANET_LIGHT, prof);
         UpdateLight();
+        prof = ProfileAdd(PROF_LIGHT, prof);
 
         if (isUseAtmosphere)
         {
             UpdateAtmosphere();
+            prof = ProfileAdd(PROF_ATM, prof);
         }
 
         UpdateCloud();
+        prof = ProfileAdd(PROF_CLOUD, prof);
         UpdateStarMap();
+        ProfileAdd(PROF_STARMAP, prof);
 
+    }
+
+    //---------------- 処理時間の計測 ----------------
+
+    //計測中なら現在時刻(ms)を返す。計測していなければ0
+    private double ProfileNow()
+    {
+        if (!debug_isProfile) { return 0; }
+
+        if (debug_profileWatch == null)
+        {
+            debug_profileWatch = new System.Diagnostics.Stopwatch();
+            debug_profileWatch.Start();
+            debug_profileSum = new double[PROF_NUM];
+            debug_profileCount = new int[PROF_NUM];
+            debug_profileName = new string[] { "時刻更新", "公転", "惑星更新", "恒星更新", "天体その他", "惑星の光源", "ライト", "大気", "雲", "星空", "FixedUpdate全体" };
+            debug_profileLogStart = debug_profileWatch.Elapsed.TotalMilliseconds;
+        }
+        return debug_profileWatch.Elapsed.TotalMilliseconds;
+    }
+
+    //startからの経過時間を区間idxに加算し、現在時刻を返す(次の区間の開始時刻にする)
+    private double ProfileAdd(int idx, double start)
+    {
+        if (!debug_isProfile || debug_profileWatch == null) { return 0; }
+
+        double now = debug_profileWatch.Elapsed.TotalMilliseconds;
+        debug_profileSum[idx] += now - start;
+        debug_profileCount[idx]++;
+        return now;
+    }
+
+    //呼び出し回数を数えずに時間だけ加算する(1回の更新で同じ区間を2度測るとき用)
+    private void ProfileAddNoCount(int idx, double start)
+    {
+        if (!debug_isProfile || debug_profileWatch == null) { return; }
+
+        debug_profileSum[idx] += debug_profileWatch.Elapsed.TotalMilliseconds - start;
+    }
+
+    //一定間隔で、区間ごとの「1回あたり」と「1秒あたり」の時間をログに出してリセットする
+    private void ProfileLog()
+    {
+        if (!debug_isProfile || debug_profileWatch == null) { return; }
+
+        double now = debug_profileWatch.Elapsed.TotalMilliseconds;
+        double span = now - debug_profileLogStart;
+        if (span < debug_profileLogInterval * 1000.0) { return; }
+
+        string log = "StE_Profile (" + (span / 1000.0).ToString("F1") + "秒間)";
+        for (int i = 0; i < PROF_NUM; i++)
+        {
+            int cnt = debug_profileCount[i];
+            double perCall = cnt > 0 ? debug_profileSum[i] / cnt : 0;
+            double perSec = debug_profileSum[i] / (span / 1000.0);
+            log += "\n" + debug_profileName[i] + ": " + perCall.ToString("F3") + " ms/回 × " + cnt + "回, " + perSec.ToString("F2") + " ms/秒";
+
+            debug_profileSum[i] = 0;
+            debug_profileCount[i] = 0;
+        }
+        Debug.Log(log);
+
+        debug_profileLogStart = now;
     }
 
     //同期処理初期化
@@ -561,7 +716,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
     public void STimeUpdate()
     {
-        sDate += sd_res / (long)(1 / Time.deltaTime);
+        sDate += (long)Math.Round(sd_res * Time.deltaTime * timeFactor); //経過時間 × 倍率
 
         if (sDate < 252463597999999L) //9999年12月31日
         {
@@ -584,6 +739,33 @@ public class StarSystemManager : UdonSharpBehaviour
             a -= b;
         }
         return a;
+    }
+
+    //観測者のいる惑星の自転周期から、J2000からの経過時間に応じたヨーイング(度)を求める
+    //自転周期が0の惑星や、惑星にいないときは yawing をそのまま使う(インスペクタ・デバッグUIの値)
+    //負の自転周期は逆行自転として逆向きに回る
+    private void UpdateYawing(int bodyIndex)
+    {
+        if (bodyIndex < 0 || rotationPeriod_planet == null || bodyIndex >= rotationPeriod_planet.Length) { return; }
+
+        //潮汐固定：平均近点角に合わせて一様に自転する(離心率があれば秤動する)
+        //緯度0・経度0の地点で主星が天頂に来るように90度ずらす(近点が+x、自転0度で地表が+y向きのため)
+        if (isTidalLock_planet != null && bodyIndex < isTidalLock_planet.Length && isTidalLock_planet[bodyIndex])
+        {
+            double period_orbit = orbitalPeriod_planet != null && bodyIndex < orbitalPeriod_planet.Length ? orbitalPeriod_planet[bodyIndex] : 0;
+            double m = CalcMeanAnomaly(GetSimSeconds(), period_orbit, argOfPeri_planet[bodyIndex]);
+            double y = m + TIDAL_LOCK_OFFSET; //mは0〜360
+            if (y >= 360.0) { y -= 360.0; }
+            yawing = (float)y;
+            return;
+        }
+
+        double period = rotationPeriod_planet[bodyIndex];
+        if (period == 0) { return; }
+
+        double phase = GetSimSeconds() / period;
+        phase -= Math.Floor(phase); //周回数を除いて精度を保つ
+        yawing = (float)(phase * 360.0);
     }
 
     public void RotationSet()
@@ -691,8 +873,16 @@ public class StarSystemManager : UdonSharpBehaviour
 
     public void PlanetPositionUpdate()
     {
+        double simSeconds = GetSimSeconds();
+        //Importerで再インポートする前は公転周期がないので、公転させない
+        bool hasPeriod = orbitalPeriod_planet != null && orbitalPeriod_planet.Length == name_planet.Length;
+
+        //主星が惑星の天体は、主星の位置が確定してから計算する(pass 0: 主星が惑星以外、pass 1: 主星が惑星)
+        for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < name_planet.Length; i++)
         {
+            bool isPlanetParent = parentType_planet[i] == PlanetParentTypes.Planet;
+            if (isPlanetParent != (pass == 1)) { continue; }
 
             Vector3 parentPos = Vector3.zero;
 
@@ -708,22 +898,89 @@ public class StarSystemManager : UdonSharpBehaviour
                     break;
             }
 
-            position_planet[i] = new Vector3(Mathf.Cos(Mathf.Deg2Rad * (float)argOfPeri_planet[i]) * (float)semiMajorAxis_planet[i] + parentPos.x,
-                                             Mathf.Sin(Mathf.Deg2Rad * (float)argOfPeri_planet[i]) * (float)semiMajorAxis_planet[i] + parentPos.y, 0);
+            //平均近点角 = 経過時間 / 公転周期 + 近点引数
+            meanAnomaly_planet[i] = CalcMeanAnomaly(simSeconds, hasPeriod ? orbitalPeriod_planet[i] : 0, argOfPeri_planet[i]);
+            position_planet[i] = parentPos + CalcOrbitPosition(semiMajorAxis_planet[i], eccentricity_planet[i], meanAnomaly_planet[i]);
 
             rotation_planet[i] = Quaternion.Euler(rotationAxis_planet[i], 0, 0);
 
         }
     }
 
+    //J2000からの経過秒数(sd_resはStartで決まるので、それまではsDateをミリ秒として扱う)
+    private double GetSimSeconds()
+    {
+        if (sd_res > 0) { return (double)sDate / sd_res; }
+        return (double)sDate * MILLISEC;
+    }
+
+    //平均近点角(度、0〜360)を求める。公転周期が0以下なら近点引数の位置で止まる
+    private double CalcMeanAnomaly(double seconds, double period, double argOfPeri)
+    {
+        double phase = 0;
+        if (period > 0)
+        {
+            phase = seconds / period;
+            phase -= Math.Floor(phase); //周回数を除いて精度を保つ
+        }
+
+        double m = phase * 360.0 + argOfPeri;
+        return m - Math.Floor(m / 360.0) * 360.0;
+    }
+
+    //平均近点角(度)からケプラー方程式を解き、主星から見た位置を返す(近点は+x方向)
+    private Vector3 CalcOrbitPosition(double semiMajorAxis, double eccentricity, double meanAnomalyDeg)
+    {
+        double e = eccentricity;
+        if (e < 0) { e = 0; }
+        if (e > 0.99) { e = 0.99; } //放物線・双曲線軌道は扱わない
+
+        double m = meanAnomalyDeg * Math.PI / 180.0;
+
+        //真円軌道では E = M なので、ケプラー方程式を解かずに円周上に置く
+        if (e == 0)
+        {
+            return new Vector3((float)(semiMajorAxis * Math.Cos(m)), (float)(semiMajorAxis * Math.Sin(m)), 0);
+        }
+
+        //ニュートン法で離心近点角Eを求める(M = E - e sinE)
+        double ea = e < 0.8 ? m : Math.PI;
+        for (int k = 0; k < KEPLER_ITERATION; k++)
+        {
+            double delta = (ea - e * Math.Sin(ea) - m) / (1 - e * Math.Cos(ea));
+            ea -= delta;
+            if (Math.Abs(delta) < 1e-10) { break; }
+        }
+
+        double x = semiMajorAxis * (Math.Cos(ea) - e);
+        double y = semiMajorAxis * Math.Sqrt(1 - e * e) * Math.Sin(ea);
+        return new Vector3((float)x, (float)y, 0);
+    }
+
+    //視直径(度)がmeshCullDiameter(分角)以下ならメッシュの描画を止める。状態が変わったときだけ切り替える
+    private void SetMeshVisible(MeshRenderer mesh, float appDiameterDeg)
+    {
+        if (mesh == null) { return; }
+
+        bool isVisible = !(appDiameterDeg * 60f <= meshCullDiameter); //NaN(天体の内側など)は描画する側に倒す
+        if (mesh.enabled != isVisible)
+        {
+            mesh.enabled = isVisible;
+        }
+    }
+
     public void UpdatePlanet()
     {
+        EnsureOcclusionArrays();
+
         for (int i = 0;i < name_planet.Length;i++)
         {
             //着陸時の処理
             if (isLanded[i])
             {
                 body_planet[i].SetActive(false);
+
+                occlusion_planet[i] = 1f;
 
                 flux_planet_obs[i] = MIN_F;
                 flux_planet_obs_surface[i] = MIN_F;
@@ -738,6 +995,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_flux[lightIndex_planet[i]] = MIN_F;
                 L_flux_light[lightIndex_planet[i]] = MIN_F;
                 L_flux_surface[lightIndex_planet[i]] = MIN_F;
+                L_surfaceBrightness[lightIndex_planet[i]] = MIN_F;
                 L_airmass[lightIndex_planet[i]] = 1f;
 
                 L_exposureness[lightIndex_planet[i]] = 0f;
@@ -764,6 +1022,9 @@ public class StarSystemManager : UdonSharpBehaviour
 
             appDiameter_planet[i] = 2f * Mathf.Rad2Deg * Mathf.Asin(dRatio);
 
+            //視直径が小さい惑星はメッシュを描画しない
+            SetMeshVisible(mesh_planet[i], (float)appDiameter_planet[i]);
+
             var distCor = (float)distUnity / distance_planet[i]; //距離正規化のための補正値
 
             //Debug.Log(name_planet[i] + ": distCor: " + distCor);
@@ -785,17 +1046,23 @@ public class StarSystemManager : UdonSharpBehaviour
 
             //恒星からの放射束を求める
 
-            double distFromStar = (position_star[parentIndex_planet[i]] - position_planet[i]).magnitude / scaledAU;
+            int rootStar = GetRootStarIndex(i); //衛星の場合も、主星をたどった先の恒星を光源にする
+
+            double distFromStar = (position_star[rootStar] - position_planet[i]).magnitude / scaledAU;
 
             //Debug.Log(body_planet[i].name + ", distFromStar:" + distFromStar);
-            flux_planet[i] = lum[parentIndex_planet[i]] / (distFromStar * distFromStar) * (1 - albedoGeom[i]);
+            flux_planet[i] = lum[rootStar] / (distFromStar * distFromStar) * (1 - albedoGeom[i]);
+
+            //食: 遮蔽天体に隠されて恒星の光が届かない分を減らす
+            occlusion_planet[i] = CalcOcclusion(position_planet[i], position_star[rootStar], (float)rad_star[rootStar], i);
+            flux_planet[i] *= occlusion_planet[i];
             //Debug.Log(name_planet[i] + " " + flux_planet[i]);
 
             float phase = 1;
 
 
             //太陽→惑星
-            var stp = (position_planet[i] - position_star[parentIndex_planet[i]]).normalized;
+            var stp = (position_planet[i] - position_star[rootStar]).normalized;
             //観測者→惑星
             var otp = (position_planet[i] - obs_position).normalized;
 
@@ -836,6 +1103,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_flux[lightIndex_planet[i]] = (float)flux * phase;
                 L_flux_light[lightIndex_planet[i]] = (float)flux_planet_obs_surface[i] / phase;
                 L_flux_surface[lightIndex_planet[i]] = (float)flux_planet_obs_surface[i];
+                L_surfaceBrightness[lightIndex_planet[i]] = CalcSurfaceBrightness(L_flux_light[lightIndex_planet[i]], rad_planet[i], distance_planet[i]);
                 L_airmass[lightIndex_planet[i]] = (float)airmass;
                 L_lightColorBase[lightIndex_planet[i]] = lightBaseColor_planet[i];
 
@@ -862,18 +1130,86 @@ public class StarSystemManager : UdonSharpBehaviour
             //ブロック取得
             mesh_planet[i].GetPropertyBlock(mesh_planet_block[i]);
 
-            Vector4 lv = view_surfaceQUnity * new Vector4(view_lightDir_planet[i].x, view_lightDir_planet[i].z, view_lightDir_planet[i].y, 0);
             mesh_planet_block[i].SetFloat("_hapke", hapke[i]);
             mesh_planet_block[i].SetTexture("_MainTex", tex_planet[i]);
 
             mesh_planet[i].SetPropertyBlock(mesh_planet_block[i]);
         }
+
+        InitLightSource();
+    }
+
+    /// <summary>
+    /// 惑星ごとの光源(方向・色・明るさ比)の配列を、lightSource****_planet の長さに合わせて確保する。
+    /// 光源リストが未設定の惑星は、主星をたどった先の恒星1つを光源にする。
+    /// </summary>
+    private void InitLightSource()
+    {
+        //シェーダーのプロパティ名(毎回の文字列連結を避けるため先に作る)
+        shaderProp_lightVector = new string[MAX_LIGHT_SOURCE];
+        shaderProp_lightColor = new string[MAX_LIGHT_SOURCE];
+        shaderProp_lightIntensity = new string[MAX_LIGHT_SOURCE];
+        for (int j = 0; j < MAX_LIGHT_SOURCE; j++)
+        {
+            shaderProp_lightVector[j] = "_lightVector" + j;
+            shaderProp_lightColor[j] = "_lightColor" + j;
+            shaderProp_lightIntensity[j] = "_lightIntensity" + j;
+        }
+
+        int planetNum = name_planet.Length;
+
+        if (lightSourceType_planet == null || lightSourceIndex_planet == null
+            || lightSourceType_planet.Length != planetNum || lightSourceIndex_planet.Length != planetNum)
+        {
+            Debug.LogWarning("StE_LightSource: 光源リストが惑星数と一致しないため、主星のみを光源にします");
+            lightSourceType_planet = new int[planetNum][];
+            lightSourceIndex_planet = new int[planetNum][];
+        }
+
+        view_lightDir_planet = new Vector3[planetNum][];
+        lightSourceColor_planet = new Color[planetNum][];
+        lightSourceRatio_planet = new float[planetNum][];
+
+        for (int i = 0; i < planetNum; i++)
+        {
+            int[] types = lightSourceType_planet[i];
+            int[] indexes = lightSourceIndex_planet[i];
+
+            //未設定なら主星をたどった先の恒星を光源にする
+            if (types == null || indexes == null || types.Length == 0 || types.Length != indexes.Length)
+            {
+                lightSourceType_planet[i] = new int[] { (int)PlanetParentTypes.Star };
+                lightSourceIndex_planet[i] = new int[] { GetRootStarIndex(i) };
+            }
+
+            int count = lightSourceType_planet[i].Length;
+            if (count > MAX_LIGHT_SOURCE)
+            {
+                Debug.LogWarning("StE_LightSource: " + name_planet[i] + " の光源が" + MAX_LIGHT_SOURCE + "個を超えているため、先頭の" + MAX_LIGHT_SOURCE + "個だけを使います");
+                count = MAX_LIGHT_SOURCE;
+            }
+
+            view_lightDir_planet[i] = new Vector3[count];
+            lightSourceColor_planet[i] = new Color[count];
+            lightSourceRatio_planet[i] = new float[count];
+        }
+    }
+
+    /// <summary>
+    /// 恒星の色(最大成分を1に正規化)を返す。
+    /// </summary>
+    /// <param name="starIndex">恒星インデックス</param>
+    private Color GetStarColor(int starIndex)
+    {
+        return ColorScaling(TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[starIndex], 1.0f));
     }
 
     
 
     public void UpdateStar()
     {
+        EnsureOcclusionArrays();
+
         for (int i = 0; i < name_star.Length; i++)
         {
 
@@ -899,10 +1235,20 @@ public class StarSystemManager : UdonSharpBehaviour
 
             appDiameter_star[i] = 2f * Mathf.Rad2Deg * Mathf.Asin(dRatio);
 
+            //視直径が小さい恒星はメッシュを描画しない
+            //appDiameter_starは単位の混ざった距離で計算しているため、ここでは相対位置(km)から求め直す
+            float starDist = positionRelative_star[i].magnitude;
+            float starDiameterDeg = starDist > 0 ? 2f * Mathf.Rad2Deg * Mathf.Atan((float)rad_star[i] / starDist) : 180f;
+            SetMeshVisible(mesh_star[i], starDiameterDeg);
+
 
             var scaledAuPos = positionRelative_star[i] / (float)scaledAU;
             distance_star[i] = scaledAuPos.magnitude;
             obsFlux_star[i] =  lum[i] / (distance_star[i] * distance_star[i]);
+
+            //食: 観測者のいる天体の遮蔽天体に隠されている分を減らす
+            occlusion_star[i] = CalcOcclusion(obs_position, position_star[i], (float)rad_star[i], obs_body_index);
+            obsFlux_star[i] *= occlusion_star[i];
             obsFlux_star_vis[i] = obsFlux_star[i] * TempToFlux(profile_teff, profile_visibleLightRatio, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[i]);
             appMagn_star[i] = CalcVisMagnitude(obsFlux_star_vis[i]);
 
@@ -937,6 +1283,9 @@ public class StarSystemManager : UdonSharpBehaviour
             L_fluxBol[i] = (float)obsFlux_star[i];
             L_flux_light[i] = (float)obsFlux_star_surface[i];
             L_flux_surface[i] = (float)obsFlux_star_surface[i];
+            //見えている部分の表面輝度は食で変わらないので、隠された分を戻して求める
+            double unoccludedFlux = occlusion_star[i] > 0f ? obsFlux_star_surface[i] / occlusion_star[i] : 0;
+            L_surfaceBrightness[i] = CalcSurfaceBrightness(unoccludedFlux, rad_star[i] / scaledAU, distance_star[i]);
             L_airmass[i] = (float)airmass;
             L_absLum[i] = (float)lum[i];
             L_dist[i] = distance_star[i];
@@ -948,22 +1297,193 @@ public class StarSystemManager : UdonSharpBehaviour
         }
     }
 
+    /// <summary>
+    /// 食の結果を入れる配列を、天体数に合わせて確保する(値は1:食なし)。
+    /// </summary>
+    private void EnsureOcclusionArrays()
+    {
+        if (occlusion_planet == null || occlusion_planet.Length != name_planet.Length)
+        {
+            occlusion_planet = new float[name_planet.Length];
+            for (int i = 0; i < occlusion_planet.Length; i++) { occlusion_planet[i] = 1f; }
+        }
+        if (occlusion_star == null || occlusion_star.Length != name_star.Length)
+        {
+            occlusion_star = new float[name_star.Length];
+            for (int i = 0; i < occlusion_star.Length; i++) { occlusion_star[i] = 1f; }
+        }
+    }
+
+    /// <summary>
+    /// 視点から見た光源の円盤のうち、bodyIndex の遮蔽天体(occluderIndex_planet)に隠されずに見えている割合(0〜1)を返す。
+    /// </summary>
+    /// <param name="viewPos">視点(スケール済みkm)</param>
+    /// <param name="lightPos">光源の位置</param>
+    /// <param name="lightRad">光源の半径(スケール済みkm)</param>
+    /// <param name="bodyIndex">遮蔽天体のリストを使う惑星番号(-1なら食なし)</param>
+    private float CalcOcclusion(Vector3 viewPos, Vector3 lightPos, float lightRad, int bodyIndex)
+    {
+        if (bodyIndex < 0 || occluderIndex_planet == null || bodyIndex >= occluderIndex_planet.Length) { return 1f; }
+
+        int[] occluders = occluderIndex_planet[bodyIndex];
+        if (occluders == null) { return 1f; }
+
+        float visible = 1f;
+        for (int k = 0; k < occluders.Length; k++)
+        {
+            int o = occluders[k];
+            if (o < 0 || o >= position_planet.Length) { continue; }
+
+            //複数の遮蔽天体が同時に重なる場合は掛け合わせる(近似)
+            visible *= CalcDiskVisibility(viewPos, lightPos, lightRad, position_planet[o], (float)rad_planet[o]);
+        }
+        return visible;
+    }
+
+    /// <summary>
+    /// 視点から見た光源の円盤が、手前の天体の円盤に隠されずに見えている面積の割合(0〜1)を返す。
+    /// 2つの円盤の角半径と離角から、重なった面積を求める(本影・半影・金環食を含む)。
+    /// </summary>
+    private float CalcDiskVisibility(Vector3 viewPos, Vector3 lightPos, float lightRad, Vector3 occPos, float occRad)
+    {
+        Vector3 toLight = lightPos - viewPos;
+        Vector3 toOcc = occPos - viewPos;
+        float distLight = toLight.magnitude;
+        float distOcc = toOcc.magnitude;
+
+        //遮蔽天体が光源より遠い、または視点が天体の中にある(判定できない)場合は隠れない
+        if (distOcc >= distLight || distOcc <= occRad || distLight <= lightRad) { return 1f; }
+
+        //角半径(rad)
+        float rL = Mathf.Asin(lightRad / distLight);
+        float rO = Mathf.Asin(occRad / distOcc);
+
+        //離角(rad)。小さい角度でも精度が落ちないよう、外積と内積から求める
+        Vector3 nL = toLight / distLight;
+        Vector3 nO = toOcc / distOcc;
+        float sep = Mathf.Atan2(Vector3.Cross(nL, nO).magnitude, Vector3.Dot(nL, nO));
+
+        if (sep >= rL + rO) { return 1f; }
+
+        float overlap;
+        if (sep <= Mathf.Abs(rL - rO))
+        {
+            //片方の円盤がもう片方に収まっている(皆既・金環)
+            float rMin = Mathf.Min(rL, rO);
+            overlap = Mathf.PI * rMin * rMin;
+        }
+        else
+        {
+            //2つの円の重なり(レンズ形)の面積
+            float rL2 = rL * rL;
+            float rO2 = rO * rO;
+            float sep2 = sep * sep;
+            float angL = Mathf.Acos(Mathf.Clamp((sep2 + rL2 - rO2) / (2f * sep * rL), -1f, 1f));
+            float angO = Mathf.Acos(Mathf.Clamp((sep2 + rO2 - rL2) / (2f * sep * rO), -1f, 1f));
+            float tri = (-sep + rL + rO) * (sep + rL - rO) * (sep - rL + rO) * (sep + rL + rO);
+            overlap = rL2 * angL + rO2 * angO - 0.5f * Mathf.Sqrt(Mathf.Max(tri, 0f));
+        }
+
+        return Mathf.Clamp01(1f - overlap / (Mathf.PI * rL * rL));
+    }
+
     private void UpdatePlanetLightning()
     {
+        EnsureOcclusionArrays();
+
         for (int i = 0; i < name_planet.Length;i++)
         {
-            //恒星の方向を求める
-            view_lightDir_planet[i] = position_star[parentIndex_planet[i]] - position_planet[i];
+            int count = view_lightDir_planet[i].Length;
+            double maxPower = 0;
+            int brightest = 0;
 
-            
+            //光源ごとの方向・色・明るさ(恒星の光度/AU^2 を単位とする放射束)を求める
+            for (int j = 0; j < count; j++)
+            {
+                int srcIdx = lightSourceIndex_planet[i][j];
+                double power = 0;
+
+                if (lightSourceType_planet[i][j] == (int)PlanetParentTypes.Star)
+                {
+                    //恒星: 光度 / 距離^2
+                    view_lightDir_planet[i][j] = position_star[srcIdx] - position_planet[i];
+                    double distAU = view_lightDir_planet[i][j].magnitude / scaledAU;
+                    power = distAU > 0 ? lum[srcIdx] / (distAU * distAU) : 0;
+                    //食
+                    power *= CalcOcclusion(position_planet[i], position_star[srcIdx], (float)rad_star[srcIdx], i);
+                    lightSourceColor_planet[i][j] = GetStarColor(srcIdx);
+                }
+                else
+                {
+                    //惑星照: 光源惑星が受ける光 × アルベド(可視光) × (半径/距離)^2 × 位相
+                    int starIdx = GetRootStarIndex(srcIdx);
+                    Vector3 srcPos = position_planet[srcIdx];
+                    view_lightDir_planet[i][j] = srcPos - position_planet[i];
+
+                    double dist = view_lightDir_planet[i][j].magnitude; //rad_planetと同じスケール済みkm
+                    double starDistAU = (position_star[starIdx] - srcPos).magnitude / scaledAU;
+
+                    if (dist > 0 && starDistAU > 0)
+                    {
+                        //恒星→光源惑星 と この惑星→光源惑星 の向きが揃うほど満ちている
+                        float phase = Mathf.InverseLerp(-1, 1, Vector3.Dot((srcPos - position_star[starIdx]).normalized, (srcPos - position_planet[i]).normalized));
+                        double radRatio = rad_planet[srcIdx] / dist;
+                        power = lum[starIdx] / (starDistAU * starDistAU) * albedoGeom[srcIdx] * radRatio * radRatio * phase;
+                        //光源惑星が食で暗くなっている分
+                        power *= occlusion_planet[srcIdx];
+                    }
+
+                    //テクスチャ平均色(未設定なら白) × 照らしている恒星の色
+                    Color baseCol = lightBaseColor_planet[srcIdx];
+                    if (Mathf.Max(baseCol.r, Mathf.Max(baseCol.g, baseCol.b)) <= 0f) { baseCol = Color.white; }
+                    lightSourceColor_planet[i][j] = ColorScaling(baseCol * GetStarColor(starIdx));
+                }
+
+                lightSourceRatio_planet[i][j] = (float)power;
+                if (power > maxPower)
+                {
+                    maxPower = power;
+                    brightest = j;
+                }
+            }
+
+            //最も明るい光源を1とした比にする
+            for (int j = 0; j < count; j++)
+            {
+                lightSourceRatio_planet[i][j] = maxPower > 0 ? (float)(lightSourceRatio_planet[i][j] / maxPower) : 0f;
+            }
 
             //Debug.Log("meshBlock: " + mesh_planet_block[i]);
 
             //ブロック取得
             mesh_planet[i].GetPropertyBlock(mesh_planet_block[i]);
 
-            Vector4 lv = view_surfaceQUnity * new Vector4(view_lightDir_planet[i].x, view_lightDir_planet[i].z, view_lightDir_planet[i].y, 0); 
-            mesh_planet_block[i].SetVector("_lightVector", lv);
+            mesh_planet_block[i].SetFloat("_lightCount", count);
+            for (int j = 0; j < MAX_LIGHT_SOURCE; j++)
+            {
+                if (j < count)
+                {
+                    Vector3 d = view_lightDir_planet[i][j];
+                    Vector4 lv = view_surfaceQUnity * new Vector3(d.x, d.z, d.y);
+                    mesh_planet_block[i].SetVector(shaderProp_lightVector[j], lv);
+                    mesh_planet_block[i].SetColor(shaderProp_lightColor[j], lightSourceColor_planet[i][j]);
+                    //比は線形のまま保持し、シェーダーには対数で圧縮して渡す(1→1、0.001→0.25 程度。暗い惑星照も見えるようにする)
+                    float ratio = lightSourceRatio_planet[i][j];
+                    mesh_planet_block[i].SetFloat(shaderProp_lightIntensity[j], ratio > 0f ? LogScaling(ratio) : 0f);
+                }
+                else
+                {
+                    mesh_planet_block[i].SetFloat(shaderProp_lightIntensity[j], 0f);
+                }
+            }
+
+            //単一光源のシェーダー(リング等)向けに、最も明るい光源の方向も従来の名前で渡す
+            if (count > 0)
+            {
+                Vector3 bd = view_lightDir_planet[i][brightest];
+                Vector4 blv = view_surfaceQUnity * new Vector3(bd.x, bd.z, bd.y);
+                mesh_planet_block[i].SetVector("_lightVector", blv);
+            }
 
             mesh_planet[i].SetPropertyBlock(mesh_planet_block[i]);
 
@@ -1030,6 +1550,33 @@ public class StarSystemManager : UdonSharpBehaviour
         ext_appDiameter_star = appDiameter_star[star];
     }
 
+    /// <summary>
+    /// 主星をたどり、惑星（衛星）が属する恒星のインデックスを返す。たどれない場合は0。
+    /// </summary>
+    /// <param name="planetIndex">惑星インデックス</param>
+    private int GetRootStarIndex(int planetIndex)
+    {
+        int idx = planetIndex;
+
+        //循環参照で無限ループしないよう、惑星数で打ち切る
+        for (int n = 0; n <= name_planet.Length; n++)
+        {
+            if (parentType_planet[idx] == PlanetParentTypes.Star)
+            {
+                return parentIndex_planet[idx];
+            }
+
+            if (parentType_planet[idx] != PlanetParentTypes.Planet)
+            {
+                break;
+            }
+
+            idx = parentIndex_planet[idx];
+        }
+
+        return 0;
+    }
+
     private int FindPlanetIndex(string name)
     {
         for (int i = 0; i < name_planet.Length; i++)
@@ -1062,6 +1609,7 @@ public class StarSystemManager : UdonSharpBehaviour
         ext_eccentricity_planet = eccentricity_planet[planet];
         ext_inclination_planet = inclination_planet[planet];
         ext_argOfPeri_planet = argOfPeri_planet[planet];
+        ext_orbitalPeriod_planet = orbitalPeriod_planet != null && planet < orbitalPeriod_planet.Length ? orbitalPeriod_planet[planet] / DAY2SEC : 0;
 
         ext_position_planet = position_planet[planet];
         ext_position_planetUnity = view_position_planetUnity[planet];
@@ -1099,7 +1647,7 @@ public class StarSystemManager : UdonSharpBehaviour
     private double CalcAirMass(double hSin, double appDiameter, bool isSimpleMethod)
     {
         double am = 0;
-        float r = (float)300;
+        float r = (float)700;
         float c = (float)hSin;
         if (!isSimpleMethod)
         {
@@ -1129,6 +1677,15 @@ public class StarSystemManager : UdonSharpBehaviour
         return Mathf.Clamp01((float)height  / (float)diameter + 0.5f);
     }
 
+    //フラックスを表面輝度に換算する(視直径の2乗で割る)。radとdistは同じ単位
+    //1AUから見た太陽と同じ視直径のときに元のフラックスと一致する
+    private float CalcSurfaceBrightness(double flux, double rad, double dist)
+    {
+        if (rad <= 0) { return MIN_F; }
+        double r = RAD_SUN_AU * dist / rad;
+        return (float)(flux * r * r);
+    }
+
     private float LogScaling(float value)
     {
         var scaledLog = Mathf.Log10((float)value);
@@ -1155,6 +1712,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
     private const float LX = 218340.61f; //可視光フラックス1が何ルクスに相当するか
     private const float LXBOL = 100000.0f;
+    private const double RAD_SUN_AU = 0.00465047; //太陽半径(AU) 表面輝度の基準(1AUから見た太陽の視半径)
     //レイリー散乱の色別強度
     private const float TAU_R = 0.35f;
     private const float TAU_G = 0.18f;
@@ -1168,6 +1726,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] float skyLightBase = 1f;
     [SerializeField] float sunBrightness = 100f, planetBrightness = 30f;
     [SerializeField, Range(-3.0f, 1.0f)] float dynamicRange;
+    [SerializeField, Range(0f, 0.1f), Tooltip("地上の全光量に対する寄与度がこれ未満の光源は、ワールドライトを無効にする")] float lightCullRatio = 0.005f;
     [SerializeField] float fluxAll, fluxAllLight, fluxAllSurface, fluxAllSurface_lx;
     [SerializeField]private Color L_meanLightColor;
     [Header("光源テスト")]
@@ -1188,6 +1747,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] float[] L_flux;
     [SerializeField] float[] L_flux_light; //位相なしのフラックス
     [SerializeField] float[] L_flux_surface; //位相込みのフラックス(地上)
+    [SerializeField] float[] L_surfaceBrightness; //表面輝度(地上) 観測者からの距離によらない。1AUから見た太陽と同じ視直径のときのフラックスに換算
     [SerializeField] float[] L_lightPhase; //天体の位相(恒星は常に1)
     [SerializeField] float[] L_airmass;
     [SerializeField] float[] L_exposureness; //露出面積　天体が見えている
@@ -1218,6 +1778,8 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public Material skyMaterial;
     [HideInInspector] public MaterialPropertyBlock skyMaterialBlock;
     private Vector3 currentLightVec;
+    private int[] skyLightIdx; //空に渡しているライト番号(L_lightObjの番号)
+    private string[] skyProp_lightVector, skyProp_lightColor, skyProp_lightWeight;
 
     [Header("大気")]
     [SerializeField, Tooltip("大気機能を使う？")] private bool isUseAtmosphere;
@@ -1323,6 +1885,7 @@ public class StarSystemManager : UdonSharpBehaviour
         L_flux = new float[lightNum];
         L_flux_light = new float[lightNum];
         L_flux_surface = new float[lightNum];
+        L_surfaceBrightness = new float[lightNum];
         L_lightPhase = new float[lightNum];
         L_airmass = new float[lightNum];
         L_exposureness = new float[lightNum];
@@ -1559,7 +2122,17 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_fluxRatio[i] = 0;
             }
 
-            L_lightObj[i].intensity = intensityAll * L_fluxRatio_surface[i] * belowCor * L_exposureness[i];
+            //寄与度の低い光源はワールドライトを切る(リアルタイムライトの描画負荷を減らす)
+            //天体メッシュ・惑星シェーダー・空の光源計算はこのライトのenabledに依存しない
+            bool isLightActive = L_fluxRatio_surface[i] >= lightCullRatio;
+            if (L_lightObj[i].enabled != isLightActive)
+            {
+                L_lightObj[i].enabled = isLightActive;
+            }
+            if (isLightActive)
+            {
+                L_lightObj[i].intensity = intensityAll * L_fluxRatio_surface[i] * belowCor * L_exposureness[i];
+            }
 
 
             //ブロック取得
@@ -1568,7 +2141,7 @@ public class StarSystemManager : UdonSharpBehaviour
             {
                 
 
-                L_matBlock_star[i].SetFloat("_intensity", sunBrightness * LogScaling(L_flux_surface[i]) *
+                L_matBlock_star[i].SetFloat("_intensity", sunBrightness * LogScaling(L_surfaceBrightness[i]) *
                     LogScaling(Mathf.Clamp(L_fluxRatio_surface[i] * Mathf.Pow(L_fluxRatio_surface[i], L_fluxRatio_surface[i] - dynamicRange), 0, 100))
                     * belowCor);
                 /*
@@ -1588,7 +2161,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
                 //Debug.Log("lightname" + L_lightMesh_planet[pi].name);
 
-                L_matBlock_planet[pi].SetFloat("_brightness2", 1 * LogScaling(L_flux_light[i]) *
+                L_matBlock_planet[pi].SetFloat("_brightness2", 1 * LogScaling(L_surfaceBrightness[i]) *
                     LogScaling(Mathf.Clamp(L_fluxRatio_light[i] * Mathf.Pow(L_fluxRatio_light[i], L_fluxRatio_light[i] - dynamicRange), 0, 100))
                     * belowCor * planetBrightness);
                 L_lightMesh_planet[pi].SetPropertyBlock(L_matBlock_planet[pi]);
@@ -1665,6 +2238,7 @@ public class StarSystemManager : UdonSharpBehaviour
         belowCor = GetBelowT(fluxAllSurface_lx, thresholdLx * 15);
         float skyBrightness = skyLightBase * scaledFlux * Mathf.Clamp01(belowCor);
         RenderSettings.skybox.SetVector("_LightVector", currentLightVec);
+        SetSkyLightSources();
         RenderSettings.skybox.SetFloat("_Brightness", skyBrightness);
         RenderSettings.skybox.SetColor("_LightColor", L_meanLightColor);
 
@@ -1677,6 +2251,89 @@ public class StarSystemManager : UdonSharpBehaviour
 
         
 
+    }
+
+    /// <summary>
+    /// 空(StESkybox)に複数光源を渡す。地表での放射束が大きい順に最大 MAX_LIGHT_SOURCE 個のライトを選び、
+    /// 選んだライトの中での構成比を影響度(_LightWeight)にする。
+    /// </summary>
+    private void SetSkyLightSources()
+    {
+        //プロパティ名(毎回の文字列連結を避けるため初回だけ作る)
+        if (skyProp_lightVector == null)
+        {
+            skyProp_lightVector = new string[MAX_LIGHT_SOURCE];
+            skyProp_lightColor = new string[MAX_LIGHT_SOURCE];
+            skyProp_lightWeight = new string[MAX_LIGHT_SOURCE];
+            for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+            {
+                skyProp_lightVector[k] = "_LightVector" + k;
+                skyProp_lightColor[k] = "_LightColor" + k;
+                skyProp_lightWeight[k] = "_LightWeight" + k;
+            }
+        }
+        if (skyLightIdx == null) { skyLightIdx = new int[MAX_LIGHT_SOURCE]; }
+
+        //放射束の大きい順にライトを選ぶ
+        int count = 0;
+        float totalFlux = 0f;
+        for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+        {
+            int best = -1;
+            float bestFlux = 0f;
+            for (int i = 0; i < L_lightObj.Length; i++)
+            {
+                if (L_flux_surface[i] <= bestFlux || L_lightVector[i] == Vector3.zero) { continue; }
+
+                bool isSelected = false;
+                for (int m = 0; m < count; m++)
+                {
+                    if (skyLightIdx[m] == i) { isSelected = true; break; }
+                }
+                if (isSelected) { continue; }
+
+                best = i;
+                bestFlux = L_flux_surface[i];
+            }
+
+            if (best == -1) { break; }
+
+            skyLightIdx[count] = best;
+            totalFlux += bestFlux;
+            count++;
+        }
+
+        Material sky = RenderSettings.skybox;
+
+        //どのライトも届いていない(地平線下など)ときは、従来どおり直前の最も明るいライトの方向だけを使う
+        if (count == 0)
+        {
+            sky.SetFloat("_LightCount", 1);
+            sky.SetVector(skyProp_lightVector[0], currentLightVec);
+            sky.SetColor(skyProp_lightColor[0], L_meanLightColor);
+            sky.SetFloat(skyProp_lightWeight[0], 1f);
+            for (int k = 1; k < MAX_LIGHT_SOURCE; k++)
+            {
+                sky.SetFloat(skyProp_lightWeight[k], 0f);
+            }
+            return;
+        }
+
+        sky.SetFloat("_LightCount", count);
+        for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+        {
+            if (k < count)
+            {
+                int i = skyLightIdx[k];
+                sky.SetVector(skyProp_lightVector[k], L_lightVector[i]);
+                sky.SetColor(skyProp_lightColor[k], L_lightColor[i]);
+                sky.SetFloat(skyProp_lightWeight[k], L_flux_surface[i] / totalFlux); //構成比
+            }
+            else
+            {
+                sky.SetFloat(skyProp_lightWeight[k], 0f);
+            }
+        }
     }
 
     public void UpdateStarMap()
@@ -1878,7 +2535,13 @@ namespace StellarEngine_Bodys
         public double eccentricity; //離心率
         public double inclination; //軌道傾斜角
         public double argOfPeri; //近点引数
-                                   
+        public double orbitalPeriod; //公転周期(秒)
+        public double rotationPeriod; //自転周期(秒)
+        public bool isTidalLock; //潮汐固定
+        public bool isUseOcclusion; //遮蔽判定(食)を行うか
+        public string[] occluderBodyName;
+        public int[] occluderIndex; //遮蔽する天体(惑星番号)
+
 
         [Header("座標")]
         [SerializeField] private Vector3 position;

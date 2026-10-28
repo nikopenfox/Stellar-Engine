@@ -30,7 +30,7 @@ MonoBehaviour:
     mrInputType: 0
     isUseLight: 1
     parentBody: Sel
-    referenceStar: []
+    lightReferenceBodys: []
     semiMajorAxis: 0.0378
     eccentricity: 0
     inclination: 0
@@ -59,7 +59,10 @@ MonoBehaviour:
     mrInputType: 0
     isUseLight: 1
     parentBody: Wawfiw
-    referenceStar: []
+    lightReferenceBodys:
+    - Sel
+    - Cuabowvyu
+    - Wawfiw
     semiMajorAxis: 0.005
     eccentricity: 0
     inclination: 0
@@ -88,7 +91,7 @@ MonoBehaviour:
     mrInputType: 0
     isUseLight: 1
     parentBody: Sel
-    referenceStar: []
+    lightReferenceBodys: []
     semiMajorAxis: 0.1151
     eccentricity: 0
     inclination: 0
@@ -117,7 +120,7 @@ MonoBehaviour:
     mrInputType: 0
     isUseLight: 1
     parentBody: Sel
-    referenceStar: []
+    lightReferenceBodys: []
     semiMajorAxis: 0.1908
     eccentricity: 0
     inclination: 0

@@ -44,7 +44,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _MainTex:
-        m_Texture: {fileID: 2800000, guid: c314283c9da57fd47aad138e809f8780, type: 3}
+        m_Texture: {fileID: 2800000, guid: 203db506bf0d65943905099ce8f1af1c, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _MetallicGlossMap:
@@ -93,6 +93,11 @@ Material:
     - _hapke: 1
     - _hapkeFrac: 0
     - _intensity: 40.64659
+    - _lightCount: 1
+    - _lightIntensity0: 1
+    - _lightIntensity1: 0
+    - _lightIntensity2: 0
+    - _lightIntensity3: 0
     - _lightType: 0
     - _oppFrac: 1
     - _reyleighB: 6
@@ -100,11 +105,19 @@ Material:
     - _reyleighR: 0.58
     - _surfaceB: 1
     m_Colors:
-    - _Color: {r: 0.9685534, g: 0.9685534, b: 0.9685534, a: 1}
+    - _Color: {r: 0.6289307, g: 0.6289307, b: 0.6289307, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _atmColor: {r: 1, g: 1, b: 1, a: 1}
     - _emissive: {r: 1, g: 0.98090714, b: 0.9437786, a: 1}
     - _lightColor: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor0: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor1: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor2: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor3: {r: 1, g: 1, b: 1, a: 1}
     - _lightVector: {r: 1, g: 0, b: 0, a: 0}
+    - _lightVector0: {r: 1, g: 0, b: 0, a: 0}
+    - _lightVector1: {r: 0, g: 0, b: 0, a: 0}
+    - _lightVector2: {r: 0, g: 0, b: 0, a: 0}
+    - _lightVector3: {r: 0, g: 0, b: 0, a: 0}
     - _localAmbientLight: {r: 0, g: 0, b: 0, a: 0}
   m_BuildTextureStacks: []

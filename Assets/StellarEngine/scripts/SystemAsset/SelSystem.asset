@@ -24,8 +24,8 @@ MonoBehaviour:
   planetDatas:
   - name: Cuabowvyu
     nameJP: "\u30C4\u30A1\u30DC\u30A6\u30F4\u30E5"
-    tex: {fileID: 2800000, guid: c314283c9da57fd47aad138e809f8780, type: 3}
-    texMeanColor: {r: 1, g: 0.71383643, b: 0.7604935, a: 0}
+    tex: {fileID: 2800000, guid: 19e8054ec67195c4da9987ff59ab196a, type: 3}
+    texMeanColor: {r: 0.9025157, g: 0.9586728, b: 1, a: 0}
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
@@ -35,10 +35,16 @@ MonoBehaviour:
     eccentricity: 0
     inclination: 0
     argOfPeri: 31
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 1.86e+27
     rad: 108971
     albedoGeom: 0.6919999718666077
     albedoBond: 0.6970000267028809
+    rotationPeriodInputType: 0
+    rotationPeriod: 10
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0
     atmPreset: 0
     atmPressure: 0
@@ -59,15 +65,24 @@ MonoBehaviour:
     mrInputType: 0
     isUseLight: 1
     parentBody: Sel
-    lightReferenceBodys: []
+    lightReferenceBodys:
+    - Sel
+    - Cuabowvyu
+    - Wawfiw
     semiMajorAxis: 0.0786
     eccentricity: 0
     inclination: 0
     argOfPeri: 0
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 5.2e+24
     rad: 6371
     albedoGeom: 0.3930000066757202
     albedoBond: 0.35199999809265137
+    rotationPeriodInputType: 0
+    rotationPeriod: 47.2
+    isTidalLock: 0
+    obliquity: 0
     hapke: 0.33399999141693115
     atmPreset: 0
     atmPressure: 0
@@ -92,11 +107,17 @@ MonoBehaviour:
     semiMajorAxis: 0.1151
     eccentricity: 0
     inclination: 0
-    argOfPeri: 333
+    argOfPeri: 16
+    periodInputType: 0
+    orbitalPeriod: 0
     mass: 1.42e+27
     rad: 88255
     albedoGeom: 0.8360000252723694
     albedoBond: 0.8510000109672546
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 0
+    obliquity: 0
     hapke: 0
     atmPreset: 0
     atmPressure: 0
@@ -122,11 +143,192 @@ MonoBehaviour:
     eccentricity: 0
     inclination: 0
     argOfPeri: 261
+    periodInputType: 0
+    orbitalPeriod: 0
     mass: 2.34e+25
     rad: 8814
     albedoGeom: 0.6290000081062317
     albedoBond: 0.6399999856948853
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 0
+    obliquity: 0
     hapke: 0.5590000152587891
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Lintw I
+    nameJP: "\u30EA\u30F3\u30C8\u30A5\u7B2C\u4E00\u885B\u661F"
+    tex: {fileID: 2800000, guid: 5c26e5fbb4937e44883e7ba816fb3085, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Lintw
+    lightReferenceBodys: []
+    semiMajorAxis: 16545
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 55
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 5.82e+18
+    rad: 70
+    albedoGeom: 0.14000000059604645
+    albedoBond: 0.16200000047683716
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 1
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Lin
+    nameJP: "\u30EA\u30F3"
+    tex: {fileID: 2800000, guid: e754d5d930452224fab6086b59074fa2, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Lintw
+    lightReferenceBodys: []
+    semiMajorAxis: 23200
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 261
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 7.17e+19
+    rad: 170
+    albedoGeom: 0.21799999475479126
+    albedoBond: 0.12099999934434891
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 1
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Lintw III
+    nameJP: "\u30EA\u30F3\u30C8\u30A5\u7B2C\u4E09\u885B\u661F"
+    tex: {fileID: 2800000, guid: 5c26e5fbb4937e44883e7ba816fb3085, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Lintw
+    lightReferenceBodys: []
+    semiMajorAxis: 34340
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 187
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.79e+19
+    rad: 100
+    albedoGeom: 0.1599999964237213
+    albedoBond: 0.16500000655651093
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 1
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Cuabowvyu I
+    nameJP: "\u30C4\u30A1\u30DC\u30A6\u30F4\u30E5\u7B2C\u4E00\u885B\u661F"
+    tex: {fileID: 2800000, guid: 1ec42110adb995748bc55509d4fabe21, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Cuabowvyu
+    lightReferenceBodys: []
+    semiMajorAxis: 160000
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 148
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.79e+19
+    rad: 125
+    albedoGeom: 0.2240000069141388
+    albedoBond: 0.27900001406669617
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.25999999046325684
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Cuabowvyu II
+    nameJP: "\u30C4\u30A1\u30DC\u30A6\u30F4\u30E5\u7B2C\u4E8C\u885B\u661F"
+    tex: {fileID: 2800000, guid: 1ec42110adb995748bc55509d4fabe21, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Cuabowvyu
+    lightReferenceBodys: []
+    semiMajorAxis: 240000
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 119
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.79e+19
+    rad: 230
+    albedoGeom: 0.2240000069141388
+    albedoBond: 0.27900001406669617
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.25999999046325684
     atmPreset: 0
     atmPressure: 0
     atmHeight: 0
