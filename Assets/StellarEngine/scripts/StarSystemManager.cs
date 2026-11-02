@@ -15,9 +15,11 @@ using System;
 public class StarSystemManager : UdonSharpBehaviour
 {
     private const float MIN_F = 1e-30f;　//floatの最小値を入れたいときの値
-    private const int BASEQUEUE = 2510; //最近傍天体のRenderQueue
-    private const float BASEDEPTH = 0.0001f; //最遠天体の深度値
-    private const float BASEDEPTH_INC = 0.00015f;
+    private const int BASEQUEUE = 2510; //最近傍天体のRenderQueue。遠い天体ほど1ずつ増やす(近い天体が先に深度を書き込み、奥の天体を隠す)
+    private const float BASEDEPTH = 0.00001f; //最遠天体の深度値(深度は1が最近傍、0が最遠)
+    private const float BASEDEPTH_INC = 0.0000015f; //描画順が1つ近くなるごとに足す深度値
+    private const float MIN_DIAMETER_DEG = 1e-9f; //CalcExposurenessで0除算を避けるための視直径(度)の下限
+    private const float ATM_DEPTH_RATIO = 0.5f; //大気パスの表側を本体より手前、裏側を奥にずらす量(BASEDEPTH_INC に対する割合。1未満にして隣の天体との間に収める)
     public const int MAX_LIGHT_SOURCE = 4; //惑星シェーダーに渡せる光源の最大数(シェーダー側のスロット数と揃える)
     private const int KEPLER_ITERATION = 20; //ケプラー方程式の反復回数の上限
     private const double TIDAL_LOCK_OFFSET = 90.0; //潮汐固定時、経度0で主星が天頂に来るためのヨーイングのずれ(度)
@@ -33,6 +35,18 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField, Range(0f, 10f), Tooltip("視直径(分角)がこれ以下の天体はメッシュを描画しない (0で常に描画)")] private float meshCullDiameter = 1f;
     [SerializeField] private float updateInterval, lightUpdateInterval; //何秒ごとに更新するか
     private float time, L_time;
+
+    [Header("光点 (視直径の小さい天体)")]
+    [SerializeField, Tooltip("視直径の小さい天体に光点を描く")] private bool isUsePoint = true;
+    [SerializeField, Tooltip("限界等級: 光点はこの等級で消え、これより暗い天体は描かない")] private float pointMagnLimit = 6f;
+    [SerializeField, Tooltip("光点が最大の大きさ・明るさになる等級")] private float pointMagnBright = -4f;
+    [SerializeField, Tooltip("昼間の限界等級: 地上の全光量の等級にこの値を足した等級より暗い天体は描かない")] private float pointDaylightRange = 22f;
+    [SerializeField, Range(0.5f, 32f), Tooltip("最も暗い光点の半径(画面ピクセル)")] private float pointSizeMin = 3f;
+    [SerializeField, Range(0.5f, 64f), Tooltip("最も明るい光点の半径(画面ピクセル)")] private float pointSizeMax = 12f;
+    [SerializeField, Range(0f, 10f), Tooltip("光点の明るさの倍率")] private float pointBrightness = 1f;
+    [SerializeField, Range(1.1f, 10f), Tooltip("光点が消える視直径 (meshCullDiameterに対する倍率)。この間でメッシュと重ねて切り替える")] private float pointFadeRatio = 3f;
+    [SerializeField, Tooltip("回折スパイクが出始める等級")] private float pointSpikeMagn = 0f;
+    [SerializeField, Range(0f, 4f), Tooltip("回折スパイクの最大の強さ")] private float pointSpikeStrength = 1f;
 
     [Header("処理時間の計測")]
     [SerializeField, Tooltip("FixedUpdate内の各処理の時間を計測してログに出す")] private bool debug_isProfile;
@@ -199,7 +213,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public string[] name_star;
     [HideInInspector] public GameObject[] body_star;
     [HideInInspector] public MeshRenderer[] mesh_star;
-    [HideInInspector] private GameObject[] point_star;
+    [HideInInspector] public MeshRenderer[] point_star; //光点(本体の子)。Importerが設定
     [Header("物理特性")]
     [HideInInspector] public string[] specClass;
     [HideInInspector] public double[] mass_star; //kg
@@ -234,6 +248,14 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public MeshRenderer[] mesh_planet;
     [HideInInspector] public Texture2D[] tex_planet;
     [HideInInspector] public MaterialPropertyBlock[] mesh_planet_block;
+    [HideInInspector] public MeshRenderer[] point_planet; //光点(本体の子)。Importerが設定
+    private MaterialPropertyBlock[] pointBlock_planet, pointBlock_star;
+
+    //描画順(RenderQueueはMaterialPropertyBlockで変えられないため、実行時に天体ごとのマテリアルを複製して持つ)
+    private Material[] mat_planet, mat_star;
+    private int[] renderQueue_planet, renderQueue_star;
+    private int[] depthRank_planet, depthRank_star; //深度の順位(自分より遠い天体の数)
+    private MaterialPropertyBlock[] renderBlock_planet, renderBlock_star; //描画順の深度を渡す
 
     [Header("軌道特性")]
      public double[] semiMajorAxis_planet; //km
@@ -416,6 +438,7 @@ public class StarSystemManager : UdonSharpBehaviour
     {
         InitLighting();
         LightInit();
+        InitRenderQueue();
 
         UpdateStar();
         UpdatePlanetLightning();
@@ -550,6 +573,8 @@ public class StarSystemManager : UdonSharpBehaviour
 
         UpdateStar();
         prof = ProfileAdd(PROF_STAR, prof);
+
+        UpdateRenderQueue();
 
 
 
@@ -972,6 +997,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public void UpdatePlanet()
     {
         EnsureOcclusionArrays();
+        EnsurePointBlocks();
 
         for (int i = 0;i < name_planet.Length;i++)
         {
@@ -1018,9 +1044,8 @@ public class StarSystemManager : UdonSharpBehaviour
 
             //視直径を求める
 
-            float dRatio = (float)rad_planet[i] / (float)distance_planet[i];
-
-            appDiameter_planet[i] = 2f * Mathf.Rad2Deg * Mathf.Asin(dRatio);
+            //Asinは半径より近いと引数が1を超えてNaNになるので、Atanで求める(距離0なら180度)
+            appDiameter_planet[i] = distance_planet[i] > 0 ? 2f * Mathf.Rad2Deg * Mathf.Atan((float)(rad_planet[i] / distance_planet[i])) : 180f;
 
             //視直径が小さい惑星はメッシュを描画しない
             SetMeshVisible(mesh_planet[i], (float)appDiameter_planet[i]);
@@ -1078,7 +1103,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
             //高度の計算
             height_planet[i] = Vector3.Dot(surfaceVec, otp);
-            height_planet_angle[i] = (180 / Mathf.PI) * Mathf.Asin(height_planet[i]);
+            height_planet_angle[i] = (180 / Mathf.PI) * Mathf.Asin(Mathf.Clamp(height_planet[i], -1f, 1f)); //内積は誤差で1を超えることがある
 
             var airmass = CalcAirMass(height_planet[i], appDiameter_planet[i], false);
             //大気密度による地平線下での散乱強さ
@@ -1114,6 +1139,14 @@ public class StarSystemManager : UdonSharpBehaviour
 
 
             appMagn_planet[i] = CalcVisMagnitude(flux_planet_obs[i]);
+
+            //光点(大気減光後の明るさで描く)
+            if (point_planet != null && i < point_planet.Length)
+            {
+                Color pointCol = lightBaseColor_planet[i] * GetReyleighColor((float)airmass, 0.35f);
+                UpdatePoint(point_planet[i], pointBlock_planet[i], (float)appDiameter_planet[i],
+                    CalcVisMagnitude(flux_planet_obs_surface[i]), pointCol);
+            }
 
             //Debug.Log(i + " " + body_planet[i].name + ", flux:" + flux * phase);
 
@@ -1209,6 +1242,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public void UpdateStar()
     {
         EnsureOcclusionArrays();
+        EnsurePointBlocks();
 
         for (int i = 0; i < name_star.Length; i++)
         {
@@ -1230,15 +1264,13 @@ public class StarSystemManager : UdonSharpBehaviour
 
             body_star[i].transform.localScale = new Vector3((float)rad_star[i], (float)rad_star[i], (float)rad_star[i]) * distCor;
 
-            //視直径
-            float dRatio = (float)rad_star[i] / (float)distance_star[i];
-
-            appDiameter_star[i] = 2f * Mathf.Rad2Deg * Mathf.Asin(dRatio);
-
-            //視直径が小さい恒星はメッシュを描画しない
-            //appDiameter_starは単位の混ざった距離で計算しているため、ここでは相対位置(km)から求め直す
+            //視直径。半径と同じ単位(スケール済みkm)の相対位置から求める
+            //(distance_starはAUで、しかもこの後で更新されるので使わない。Asinは半径より近いとNaNになるのでAtanを使う)
             float starDist = positionRelative_star[i].magnitude;
             float starDiameterDeg = starDist > 0 ? 2f * Mathf.Rad2Deg * Mathf.Atan((float)rad_star[i] / starDist) : 180f;
+            appDiameter_star[i] = starDiameterDeg;
+
+            //視直径が小さい恒星はメッシュを描画しない
             SetMeshVisible(mesh_star[i], starDiameterDeg);
 
 
@@ -1258,7 +1290,7 @@ public class StarSystemManager : UdonSharpBehaviour
             //ots = new Vector3 (ots.x, ots.z, ots.y);
             sunVecObj.rotation = Quaternion.LookRotation(ots);
             height_star[i] = Vector3.Dot(surfaceVec, ots);
-            height_star_angle[i] = (180 / Mathf.PI) * Mathf.Asin(height_star[i]);
+            height_star_angle[i] = (180 / Mathf.PI) * Mathf.Asin(Mathf.Clamp(height_star[i], -1f, 1f)); //内積は誤差で1を超えることがある
             //Debug.Log("ots: " + ots + " surface: " + surfaceVec);
 
             var airmass = CalcAirMass(height_star[i], appDiameter_star[i], false);
@@ -1292,9 +1324,142 @@ public class StarSystemManager : UdonSharpBehaviour
 
             L_exposureness[i] = exposureness;
 
+            //光点(大気減光後の明るさで描く)
+            if (point_star != null && i < point_star.Length)
+            {
+                Color pointCol = TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[i], 1.0f)
+                    * GetReyleighColor((float)airmass, 0.35f);
+                UpdatePoint(point_star[i], pointBlock_star[i], starDiameterDeg,
+                    CalcVisMagnitude(obsFlux_star_surface[i]), pointCol);
+            }
+
 
             //Debug.Log("obsFlux: " + obsFlux_star[i]);
         }
+    }
+
+    /// <summary>
+    /// 描画順を変えるため、天体ごとのマテリアルを複製して保持する。
+    /// renderer.material はエディタ上で呼ぶとシーンにマテリアルが漏れるので、実行時(Start)だけで呼ぶ。
+    /// </summary>
+    private void InitRenderQueue()
+    {
+        mat_planet = new Material[name_planet.Length];
+        renderQueue_planet = new int[name_planet.Length];
+        renderBlock_planet = new MaterialPropertyBlock[name_planet.Length];
+        for (int i = 0; i < name_planet.Length; i++)
+        {
+            renderBlock_planet[i] = new MaterialPropertyBlock();
+            if (mesh_planet[i] == null) { continue; }
+            mat_planet[i] = mesh_planet[i].material;
+            renderQueue_planet[i] = -1; //初回は必ず設定する
+        }
+        depthRank_planet = new int[name_planet.Length];
+
+        mat_star = new Material[name_star.Length];
+        renderQueue_star = new int[name_star.Length];
+        renderBlock_star = new MaterialPropertyBlock[name_star.Length];
+        for (int i = 0; i < name_star.Length; i++)
+        {
+            renderBlock_star[i] = new MaterialPropertyBlock();
+            if (mesh_star[i] == null) { continue; }
+            mat_star[i] = mesh_star[i].material;
+            renderQueue_star[i] = -1;
+        }
+        depthRank_star = new int[name_star.Length];
+    }
+
+    /// <summary>
+    /// 描画順(rank: 自分より遠い天体の数)に合わせた深度をシェーダーに渡す。
+    /// 天体全体の深度値を BASEDEPTH + rank × BASEDEPTH_INC の一定値にする(深度は1が最近傍、0が最遠なので、近い天体ほど大きい)。
+    /// 大気パスは同じ深度だと本体と競合するので、ATM_DEPTH_RATIO × BASEDEPTH_INC だけずらす。
+    /// 表側の面は本体より手前、裏側の面は本体より奥(惑星表面に隠れる)にし、どちらも隣の天体の深度との間に収める。
+    /// </summary>
+    private void SetOrderedDepth(MeshRenderer mesh, MaterialPropertyBlock block, int rank)
+    {
+        float depth = BASEDEPTH + rank * BASEDEPTH_INC;
+        mesh.GetPropertyBlock(block);
+        block.SetFloat("_orderedDepth", depth);
+        block.SetFloat("_orderedDepthAtmOffset", BASEDEPTH_INC * ATM_DEPTH_RATIO);
+        mesh.SetPropertyBlock(block);
+    }
+
+    /// <summary>
+    /// 天体の描画順と深度を、観測者からの距離に合わせて設定する。
+    /// 本体のパスは加算合成なので、後から描いても手前の天体は奥の天体を覆えない。
+    /// そのため近い天体から先に描いて深度を書き込み、奥の天体を深度テストで隠す。
+    /// RenderQueue は最近傍天体を BASEQUEUE とし、遠い順に 1 ずつ増やす。深度値は近い天体ほど大きくする(SetOrderedDepth)。
+    /// 天体番号は惑星 0〜(惑星数-1)、恒星はその後ろに続けて数える。
+    /// </summary>
+    private void UpdateRenderQueue()
+    {
+        if (mat_planet == null || mat_star == null) { return; }
+
+        int planetNum = name_planet.Length;
+        int total = planetNum + name_star.Length;
+
+        for (int a = 0; a < total; a++)
+        {
+            double distA = GetRenderDistance(a);
+            if (distA < 0) { continue; }
+
+            //自分より近い天体の数(描画順)と遠い天体の数(深度の順位)。同じ距離なら番号の小さい方を遠いとみなす
+            int nearer = 0;
+            int farther = 0;
+            for (int b = 0; b < total; b++)
+            {
+                if (b == a) { continue; }
+                double distB = GetRenderDistance(b);
+                if (distB < 0) { continue; }
+                if (distB > distA || (distB == distA && b < a)) { farther++; }
+                else { nearer++; }
+            }
+
+            int queue = BASEQUEUE + nearer;
+
+            //変わったときだけ設定する
+            if (a < planetNum)
+            {
+                if (mat_planet[a] != null && (renderQueue_planet[a] != queue || depthRank_planet[a] != farther))
+                {
+                    mat_planet[a].renderQueue = queue;
+                    renderQueue_planet[a] = queue;
+                    depthRank_planet[a] = farther;
+                    SetOrderedDepth(mesh_planet[a], renderBlock_planet[a], farther);
+                    //光点も本体と同じ深度にして、手前の天体に隠れるようにする
+                    if (point_planet != null && pointBlock_planet != null && a < point_planet.Length && point_planet[a] != null)
+                    {
+                        SetOrderedDepth(point_planet[a], pointBlock_planet[a], farther);
+                    }
+                }
+            }
+            else
+            {
+                int s = a - planetNum;
+                if (mat_star[s] != null && (renderQueue_star[s] != queue || depthRank_star[s] != farther))
+                {
+                    mat_star[s].renderQueue = queue;
+                    renderQueue_star[s] = queue;
+                    depthRank_star[s] = farther;
+                    SetOrderedDepth(mesh_star[s], renderBlock_star[s], farther);
+                    if (point_star != null && pointBlock_star != null && s < point_star.Length && point_star[s] != null)
+                    {
+                        SetOrderedDepth(point_star[s], pointBlock_star[s], farther);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// UpdateRenderQueue 用の、観測者から天体までの距離(スケール済みkm)。観測者のいる天体は -1(順位の対象外)。
+    /// </summary>
+    /// <param name="k">惑星 0〜(惑星数-1)、恒星はその後ろに続く通し番号</param>
+    private double GetRenderDistance(int k)
+    {
+        int planetNum = name_planet.Length;
+        if (k < planetNum) { return isLanded[k] ? -1 : distance_planet[k]; }
+        return positionRelative_star[k - planetNum].magnitude;
     }
 
     /// <summary>
@@ -1312,6 +1477,63 @@ public class StarSystemManager : UdonSharpBehaviour
             occlusion_star = new float[name_star.Length];
             for (int i = 0; i < occlusion_star.Length; i++) { occlusion_star[i] = 1f; }
         }
+    }
+
+    /// <summary>
+    /// 光点の MaterialPropertyBlock を、光点の数に合わせて確保する(エディタ上の OnValidate からも呼ばれるため、必要なときに作る)。
+    /// </summary>
+    private void EnsurePointBlocks()
+    {
+        if (point_planet != null && (pointBlock_planet == null || pointBlock_planet.Length != point_planet.Length))
+        {
+            pointBlock_planet = new MaterialPropertyBlock[point_planet.Length];
+            for (int i = 0; i < pointBlock_planet.Length; i++) { pointBlock_planet[i] = new MaterialPropertyBlock(); }
+        }
+        if (point_star != null && (pointBlock_star == null || pointBlock_star.Length != point_star.Length))
+        {
+            pointBlock_star = new MaterialPropertyBlock[point_star.Length];
+            for (int i = 0; i < pointBlock_star.Length; i++) { pointBlock_star[i] = new MaterialPropertyBlock(); }
+        }
+    }
+
+    /// <summary>
+    /// 光点(視直径の小さい天体に重ねるビルボード)の色・明るさ・大きさを設定する。
+    /// 視直径が meshCullDiameter 以下では最大、meshCullDiameter × pointFadeRatio で0になり、その間はメッシュと重ねて切り替える。
+    /// 大きさと明るさは等級に合わせて、限界等級(昼間は地上の全光量から下げる)で0、pointMagnBright で最大にする。
+    /// </summary>
+    /// <param name="appDiameterDeg">視直径(度)</param>
+    /// <param name="appMagn">大気減光後の等級</param>
+    private void UpdatePoint(MeshRenderer point, MaterialPropertyBlock block, float appDiameterDeg, double appMagn, Color col)
+    {
+        if (point == null || block == null) { return; }
+
+        //視直径によるフェード(分角で比べる)
+        float cull = Mathf.Max(meshCullDiameter, 0.01f);
+        float fade = 1f - Mathf.InverseLerp(cull, cull * pointFadeRatio, appDiameterDeg * 60f);
+
+        //限界等級。昼間は空が明るいので、地上の全光量の等級 + pointDaylightRange まで下げる
+        float limit = pointMagnLimit;
+        if (fluxAllSurface > 0f) { limit = Mathf.Min(limit, (float)CalcVisMagnitude(fluxAllSurface) + pointDaylightRange); }
+
+        float m = (float)appMagn;
+        float t = Mathf.InverseLerp(limit, pointMagnBright, m); //0:限界等級 1:最大
+        bool isVisible = isUsePoint && fade > 0f && m < limit; //NaN(天体の内側など)は描かない側に倒す
+
+        if (point.enabled != isVisible)
+        {
+            point.enabled = isVisible;
+        }
+        if (!isVisible) { return; }
+
+        //スパイクは pointSpikeMagn から2等かけて強める
+        float spike = pointSpikeStrength * Mathf.Clamp01((pointSpikeMagn - m) * 0.5f);
+
+        point.GetPropertyBlock(block);
+        block.SetColor("_Color", col);
+        block.SetFloat("_pointIntensity", pointBrightness * t * fade);
+        block.SetFloat("_pointSize", Mathf.Lerp(pointSizeMin, pointSizeMax, t));
+        block.SetFloat("_spikeStrength", spike);
+        point.SetPropertyBlock(block);
     }
 
     /// <summary>
@@ -1674,7 +1896,29 @@ public class StarSystemManager : UdonSharpBehaviour
 
     private float CalcExposureness(double height, double diameter, double horizonHeight)
     {
-        return Mathf.Clamp01((float)height  / (float)diameter + 0.5f);
+        //視直径0(半径0)で0除算にならないよう下限を付ける
+        return Mathf.Clamp01((float)height  / Mathf.Max((float)diameter, MIN_DIAMETER_DEG) + 0.5f);
+    }
+
+    //寄与度 r を dynamicRange で強調した値(0〜100)。r=0 で dynamicRange>0 のとき 0×∞ でNaNになるのを避ける
+    private float CalcDynamicRangeRatio(float r)
+    {
+        if (!(r > 0f)) { return 0f; }
+        return Mathf.Clamp(r * Mathf.Pow(r, r - dynamicRange), 0, 100);
+    }
+
+    //NaN・無限大なら0にする(1つの光源の異常値が合計を通して全光源に広がるのを防ぐ安全弁)
+    //NaN・無限大は v - v が0にならないことで判定する(float.IsNaN の Udon 対応を避ける)
+    private float SanitizeFlux(float v, int lightIdx, string label)
+    {
+        if (v - v == 0f) { return v; }
+
+        if (!debug_isWarnedInvalidFlux)
+        {
+            debug_isWarnedInvalidFlux = true; //毎回出すとログが溢れるので最初の1回だけ
+            Debug.LogWarning("StE_Light: " + label + " が異常値(" + v + ")のため0にしました。ライト: " + L_lightObj[lightIdx].name);
+        }
+        return 0f;
     }
 
     //フラックスを表面輝度に換算する(視直径の2乗で割る)。radとdistは同じ単位
@@ -1726,6 +1970,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] float skyLightBase = 1f;
     [SerializeField] float sunBrightness = 100f, planetBrightness = 30f;
     [SerializeField, Range(-3.0f, 1.0f)] float dynamicRange;
+    private bool debug_isWarnedInvalidFlux; //SanitizeFluxの警告を出したか(最初の1回だけ出す)
     [SerializeField, Range(0f, 0.1f), Tooltip("地上の全光量に対する寄与度がこれ未満の光源は、ワールドライトを無効にする")] float lightCullRatio = 0.005f;
     [SerializeField] float fluxAll, fluxAllLight, fluxAllSurface, fluxAllSurface_lx;
     [SerializeField]private Color L_meanLightColor;
@@ -2070,6 +2315,13 @@ public class StarSystemManager : UdonSharpBehaviour
 
                 //L_matBlock_planet
             }
+            //安全弁: 異常値の光源は0にして、合計(fluxAll*)と全光源の比が壊れないようにする
+            L_flux[i] = SanitizeFlux(L_flux[i], i, "L_flux");
+            L_flux_light[i] = SanitizeFlux(L_flux_light[i], i, "L_flux_light");
+            L_flux_surface[i] = SanitizeFlux(L_flux_surface[i], i, "L_flux_surface");
+            L_surfaceBrightness[i] = SanitizeFlux(L_surfaceBrightness[i], i, "L_surfaceBrightness");
+            L_exposureness[i] = SanitizeFlux(L_exposureness[i], i, "L_exposureness");
+
             fx += L_flux[i];
             fxLight += L_flux_light[i];
             fxSurf += L_flux_surface[i];
@@ -2142,7 +2394,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 
 
                 L_matBlock_star[i].SetFloat("_intensity", sunBrightness * LogScaling(L_surfaceBrightness[i]) *
-                    LogScaling(Mathf.Clamp(L_fluxRatio_surface[i] * Mathf.Pow(L_fluxRatio_surface[i], L_fluxRatio_surface[i] - dynamicRange), 0, 100))
+                    LogScaling(CalcDynamicRangeRatio(L_fluxRatio_surface[i]))
                     * belowCor);
                 /*
                   Debug.Log("lightIntensity: " + sunBrightness * LogScaling(L_flux_surface[i]) *
@@ -2162,7 +2414,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 //Debug.Log("lightname" + L_lightMesh_planet[pi].name);
 
                 L_matBlock_planet[pi].SetFloat("_brightness2", 1 * LogScaling(L_surfaceBrightness[i]) *
-                    LogScaling(Mathf.Clamp(L_fluxRatio_light[i] * Mathf.Pow(L_fluxRatio_light[i], L_fluxRatio_light[i] - dynamicRange), 0, 100))
+                    LogScaling(CalcDynamicRangeRatio(L_fluxRatio_light[i]))
                     * belowCor * planetBrightness);
                 L_lightMesh_planet[pi].SetPropertyBlock(L_matBlock_planet[pi]);
 

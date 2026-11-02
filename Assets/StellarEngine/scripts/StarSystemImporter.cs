@@ -201,9 +201,9 @@ public class StarSystemImporter : MonoBehaviour
                 pl.lightObj = Instantiate(lightBaseObj);
                 pl.lightObj.name = planetData.name + "_light";
                 pl.lightObj.transform.SetParent(pl.body.transform);
-                pl.texMeanColor = planetData.texMeanColor;
 
             }
+            pl.texMeanColor = planetData.texMeanColor; //光点の色にも使うので、ライトを使わない惑星でも設定する
 
 
             pl.parentType = SearchParent(planetData.parentBody, out pl.parentIndex);
@@ -400,6 +400,7 @@ public class StarSystemImporter : MonoBehaviour
         manager.name_star = new string[stars.Length];
         manager.body_star = new GameObject[stars.Length];
         manager.mesh_star = new MeshRenderer[stars.Length];
+        manager.point_star = new MeshRenderer[stars.Length];
 
 
         manager.specClass = new string[stars.Length];
@@ -429,6 +430,7 @@ public class StarSystemImporter : MonoBehaviour
             manager.body_star[i] = star.body;
             manager.body_star[i].transform.SetParent(manager.cSphere.transform);
             manager.mesh_star[i] = manager.body_star[i].GetComponent<MeshRenderer>();
+            manager.point_star[i] = CreatePoint(manager.body_star[i]);
 
             manager.specClass[i] = star.specClass;
             manager.mass_star[i] = star.mass;
@@ -451,6 +453,7 @@ public class StarSystemImporter : MonoBehaviour
 
         manager.mesh_planet = new MeshRenderer[planets.Length];
         manager.mesh_planet_block = new MaterialPropertyBlock[planets.Length];
+        manager.point_planet = new MeshRenderer[planets.Length];
 
         manager.lightObj_planet = new Light[planets.Length];
         manager.lightBaseColor_planet = new Color[planets.Length];
@@ -522,6 +525,7 @@ public class StarSystemImporter : MonoBehaviour
 
             manager.mesh_planet[i] = manager.body_planet[i].GetComponent<MeshRenderer>();
             manager.mesh_planet_block[i] = new MaterialPropertyBlock();
+            manager.point_planet[i] = CreatePoint(manager.body_planet[i]);
 
             manager.tex_planet[i] = planet.texture;
 
@@ -831,6 +835,25 @@ public class StarSystemImporter : MonoBehaviour
         pl.lightSourceBodyName = names.ToArray();
         pl.lightSourceType = types.ToArray();
         pl.lightSourceIndex = indexes.ToArray();
+    }
+
+    /// <summary>
+    /// 光点(pointObj)を天体本体の子として作り、MeshRenderer を返す。pointObj が未設定なら null。
+    /// 本体と一緒に破棄・非表示になる。位置と大きさはシェーダー側で決めるので、ローカル座標は原点にする。
+    /// </summary>
+    /// <param name="body">天体本体</param>
+    private MeshRenderer CreatePoint(GameObject body)
+    {
+        if (pointObj == null) { return null; }
+
+        var point = Instantiate(pointObj, body.transform, false);
+        point.name = body.name + "_point";
+        point.transform.localPosition = Vector3.zero;
+        point.transform.localRotation = Quaternion.identity;
+
+        var mesh = point.GetComponent<MeshRenderer>();
+        if (mesh == null) { Debug.LogWarning("光点のオブジェクトに MeshRenderer がありません: " + pointObj.name); }
+        return mesh;
     }
 
     /// <summary>

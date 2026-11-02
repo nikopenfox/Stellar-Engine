@@ -30,14 +30,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0116
     eccentricity: 0
     inclination: 0
     argOfPeri: 31
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 1.3771
     rad: 1.116
     albedoGeom: 0.17900000512599945
     albedoBond: 0.1720000058412552
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.3009999990463257
     atmPreset: 0
     atmPressure: 0
@@ -58,14 +67,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0158
     eccentricity: 0
     inclination: 0
     argOfPeri: 11
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 1.3105
     rad: 1.097
     albedoGeom: 0.21199999749660492
     albedoBond: 0.20800000429153442
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.3930000066757202
     atmPreset: 0
     atmPressure: 0
@@ -86,14 +104,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0222
     eccentricity: 0
     inclination: 0
     argOfPeri: 79
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 0.3885
     rad: 0.778
     albedoGeom: 0.3009999990463257
     albedoBond: 0.3009999990463257
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.3009999990463257
     atmPreset: 0
     atmPressure: 0
@@ -114,14 +141,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0292
     eccentricity: 0
     inclination: 0
     argOfPeri: 0
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 0.6392
     rad: 0.92
     albedoGeom: 0.28999999165534973
     albedoBond: 0.296999990940094
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.3009999990463257
     atmPreset: 0
     atmPressure: 0
@@ -142,14 +178,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0385
     eccentricity: 0
     inclination: 0
     argOfPeri: 105
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 1.041
     rad: 1.045
     albedoGeom: 0.43700000643730164
     albedoBond: 0.40400001406669617
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.4480000138282776
     atmPreset: 0
     atmPressure: 0
@@ -170,14 +215,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0469
     eccentricity: 0
     inclination: 0
     argOfPeri: 225
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 1.32
     rad: 1.13
     albedoGeom: 0.6330000162124634
     albedoBond: 0.6140000224113464
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.4740000069141388
     atmPreset: 0
     atmPressure: 0
@@ -198,14 +252,23 @@ MonoBehaviour:
     mrInputType: 3
     isUseLight: 1
     parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
     semiMajorAxis: 0.0619
     eccentricity: 0
     inclination: 0
     argOfPeri: 334
+    periodInputType: 1
+    orbitalPeriod: 0
     mass: 0.326
     rad: 0.755
     albedoGeom: 0.8029999732971191
     albedoBond: 0.7919999957084656
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
     hapke: 0.5889999866485596
     atmPreset: 0
     atmPressure: 0
