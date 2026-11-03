@@ -16,7 +16,7 @@ Material:
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
-  m_CustomRenderQueue: -1
+  m_CustomRenderQueue: 2700
   stringTagMap: {}
   disabledShaderPasses: []
   m_LockedProperties: 
@@ -85,17 +85,17 @@ Material:
     - _SrcBlend: 1
     - _UVSec: 0
     - _ZWrite: 1
-    - _bodyAngularRadius: 0
-    - _brightPointStrength: 1
-    - _coreSigma: 0.25
+    - _bodyAngularRadius: 1
+    - _brightPointStrength: 0
+    - _coreSigma: 0.275
     - _customDepthMul: 0.0001
-    - _glareAngularRadius: 0
+    - _glareAngularRadius: 0.1
     - _glareDepthOffset: 0
-    - _glareFalloff: 0.25
-    - _glareIntensity: 0
+    - _glareFalloff: 0.073
+    - _glareIntensity: 0.001
     - _orderedDepth: 0
     - _pointIntensity: 1
-    - _pointSize: 4
+    - _pointSize: 10
     - _spikeAngle: 0
     - _spikeCount: 4
     - _spikeIntensity: 0

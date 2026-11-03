@@ -21,6 +21,7 @@ MonoBehaviour:
     teff: 3400
     lum: 0.005
     isUseSolarUnit: 0
+    isUsePSF: 1
   planetDatas:
   - name: Cuabowvyu
     nameJP: "\u30C4\u30A1\u30DC\u30A6\u30F4\u30E5"
@@ -29,6 +30,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -66,6 +68,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys:
     - Sel
@@ -106,6 +109,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -143,6 +147,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -180,6 +185,7 @@ MonoBehaviour:
     smaInputType: 1
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Lintw
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -217,6 +223,7 @@ MonoBehaviour:
     smaInputType: 1
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Lintw
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -254,6 +261,7 @@ MonoBehaviour:
     smaInputType: 1
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Lintw
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -291,6 +299,7 @@ MonoBehaviour:
     smaInputType: 1
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Cuabowvyu
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -328,6 +337,7 @@ MonoBehaviour:
     smaInputType: 1
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Cuabowvyu
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -365,6 +375,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -402,6 +413,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1
@@ -439,6 +451,7 @@ MonoBehaviour:
     smaInputType: 0
     mrInputType: 0
     isUseLight: 1
+    isUsePSF: 0
     parentBody: Sel
     lightReferenceBodys: []
     isUseOcclusion: 1

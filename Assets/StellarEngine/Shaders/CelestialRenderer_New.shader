@@ -6,6 +6,8 @@ Shader "Custom/CelestialRenderer_New"
         _localAmbientLight ("Local Ambient Light", Color) = (0,0,0,0)
         _MainTex ("Texture", 2D) = "white" {}
         _customDepthMul ("customDepthMul", Float) = 0.0001
+        _orderedDepth ("OrderedDepth", Float) = 0 //描画順の深度値(1:最近傍 0:最遠)。0なら従来の深度。StarSystemManagerが設定する
+        _orderedDepthAtmOffset ("OrderedDepthAtmOffset", Float) = 0 //大気パスの深度のずらし幅。表側の面は本体より手前、裏側の面は奥にする
         _brightness ("Brightness", Float) = 1.0
         _brightness2 ("Brightness2", Float) = 1.0
         _surfaceB ("Surface Brightness", Float) = 1.0
@@ -155,6 +157,7 @@ Shader "Custom/CelestialRenderer_New"
             
 
             float _customDepthMul;
+            float _orderedDepth;
             float _lightType;
             float _brightness;
             float _brightness2;
@@ -239,7 +242,9 @@ Shader "Custom/CelestialRenderer_New"
                 fixed3 rgb = (diffuse + opposition) * col.rgb * _Color.rgb * _surfaceB * _brightness2;;
                 fixed4 tex = fixed4(rgb, 1.0) + _localAmbientLight;
                 // apply fog
-                outDepth = i.vertex.z / i.vertex.w * _customDepthMul;
+                //描画順が設定されていれば、天体全体を描画順の深度値にする
+                outDepth = _orderedDepth > 0 ? _orderedDepth
+                                                : i.vertex.z / i.vertex.w * _customDepthMul;
                 return tex;
             }
             ENDCG
@@ -264,12 +269,15 @@ Shader "Custom/CelestialRenderer_New"
             //#pragma multi_compile_fog
             #pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
             //#pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
+            #pragma target 3.0 //VFACE(表裏の判定)に必要
 
             
 
             #include "UnityCG.cginc"
-            
+
             float _customDepthMul;
+            float _orderedDepth;
+            float _orderedDepthAtmOffset;
             float _lightType;
             float _brightness;
             float _brightness2;
@@ -333,11 +341,11 @@ Shader "Custom/CelestialRenderer_New"
 
                 o.worldViewDir = normalize(UnityWorldSpaceViewDir(worldPos));
                 //UNITY_TRANSFER_FOG(o,o.vertex);
-                
+
                 return o;
             }
 
-            fixed4 frag (v2f i, out float outDepth : SV_Depth) : SV_Target
+            fixed4 frag (v2f i, fixed facing : VFACE, out float outDepth : SV_Depth) : SV_Target
             {
                 float3 normal = normalize(i.worldNormal);
 
@@ -445,7 +453,10 @@ Shader "Custom/CelestialRenderer_New"
                 clip(tauMax + 0.01);
 
                 // apply fog
-                outDepth = i.vertex.z / i.vertex.w * _customDepthMul;
+                //描画順が設定されていれば、表側の面は本体より少し手前、裏側の面は本体より少し奥の一定の深度にする
+                //(裏側は惑星表面に隠れ、円盤の外では見える。どちらも隣の天体の深度との間に収める)
+                outDepth = _orderedDepth > 0 ? _orderedDepth + (facing > 0 ? _orderedDepthAtmOffset : -_orderedDepthAtmOffset)
+                                             : i.vertex.z / i.vertex.w * _customDepthMul;
                 float viewFactor = min(ndotv - 0.25, 0);
                 return fixed4(atmColSum * _Color.rgb * viewFactor, _Color.a * viewFactor);
             }

@@ -7,6 +7,7 @@ Shader "Custom/SunRenderer"
         _Color ("Main Color", Color) = (1,1,1,1)
         _MainTex("Texture", 2D) = "white" {}
         _customDepthMul("CustomDepth", float) = 0.001
+        _orderedDepth("OrderedDepth", float) = 0 //Render-order depth value (1: nearest, 0: farthest). 0 = legacy depth. Set by StarSystemManager
         _emissive("EmissiveCol", Color) = (1,1,1,1)
         _intensity("Intensity", float) = 0.0
         }
@@ -31,6 +32,7 @@ Shader "Custom/SunRenderer"
             #include "AutoLight.cginc"
 
             fixed _customDepthMul;
+            float _orderedDepth;
             fixed _intensity;
             fixed4 _color;
             fixed4 _emissive;
@@ -69,7 +71,9 @@ Shader "Custom/SunRenderer"
                 // apply fog
                 fixed3 rgb = col.rgb * _Color.rgb * (_emissive.rgb * _intensity);
                 fixed4 tex = fixed4(rgb, 1.0);
-                outDepth = i.vertex.z / i.vertex.w * _customDepthMul;
+                //If render order is set, use the render-order depth value for the whole body
+                outDepth = _orderedDepth > 0 ? _orderedDepth
+                                                : i.vertex.z / i.vertex.w * _customDepthMul;
                 return tex;
             }
             ENDCG

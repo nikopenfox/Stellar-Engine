@@ -60,8 +60,15 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField, Range(0f, 360f), Tooltip("光条の回転角(度)")] private float spikeAngle = 0f;
     [SerializeField, Range(0f, 200f), Tooltip("出始めの表面輝度から1等明るくなるごとに伸ばす長さ(画面ピクセル)")] private float spikeLengthPerMagn = 30f;
     [SerializeField, Range(1f, 2000f), Tooltip("光条の長さの上限(画面ピクセル)")] private float spikeLengthMax = 300f;
-    [SerializeField, Range(0f, 1f), Tooltip("光条の太さ (視直径のピクセル数に対する割合)")] private float spikeWidthRatio = 0.05f;
-    [SerializeField, Range(0.1f, 16f), Tooltip("光条の太さの下限(画面ピクセル)")] private float spikeWidthMin = 1f;
+    [SerializeField, Range(0.1f, 16f), Tooltip("光条の太さの下限(画面ピクセル)。視直径が分解能 resolvingPower 以下のときの太さ")] private float spikeWidthMin = 1f;
+    [SerializeField, Range(0f, 2f), Tooltip("光条の太さの指数: 太さ = spikeWidthMin × (視直径 / resolvingPower)^この値。0で一定、1で視直径に比例")] private float spikeWidthExponent = 0.5f;
+    [SerializeField, Tooltip("点広がり関数(PSF)のテクスチャ。観測者の光学系の細かな特性を表す(RGBを使い、中心が天体の位置)。未設定ならマテリアルのものを使う")] private Texture2D observerPSF;
+    [SerializeField, Tooltip("PSFが出始める等級 (点光源とみなしたときの相対輝度。視直径によらない)")] private float psfMagnThreshold = 0f;
+    [SerializeField, Range(0.1f, 20f), Tooltip("PSFの出始めから最大の明るさになるまでの等級の幅")] private float psfFadeMagn = 3f;
+    [SerializeField, Range(0f, 10f), Tooltip("PSFの明るさの倍率")] private float psfBrightness = 1f;
+    [SerializeField, Range(0f, 200f), Tooltip("出始めの等級から1等明るくなるごとに広げるPSFの半径(画面ピクセル)")] private float psfSizePerMagn = 4f;
+    [SerializeField, Range(1f, 2000f), Tooltip("PSFの半径の上限(画面ピクセル)")] private float psfSizeMax = 200f;
+    [SerializeField, Tooltip("遮蔽判定の深度(_CameraDepthTexture の生の値。1が最近傍、0が最遠)。発光中心の深度がこれ以上なら地表のオブジェクトに隠されたとみなして描かない。目安は ニアクリップ距離 / 遮蔽物までの距離")] private float spikeOcclusionDepth = 1e-7f;
 
     [Header("光芒 (視直径の大きい天体)")]
     [SerializeField, Tooltip("視直径の大きい天体に光芒を描く(光点が消えた視直径から出始める)")] private bool isUseGlare = true;
@@ -237,8 +244,9 @@ public class StarSystemManager : UdonSharpBehaviour
     public string[] name_star;
     [HideInInspector] public GameObject[] body_star;
     [HideInInspector] public MeshRenderer[] mesh_star;
-    [HideInInspector] public MeshRenderer[] point_star; //光点・回折スパイク(本体の子)。Importerが設定
-    [HideInInspector] public MeshRenderer[] glare_star; //光芒(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] point_star; //光点・光芒(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] spike_star; //回折スパイク(本体の子)。Importerが設定
+    [HideInInspector] public bool[] isUsePSF_star; //回折スパイクにPSFテクスチャを使うか。Importerが設定
     [Header("物理特性")]
     [HideInInspector] public string[] specClass;
     [HideInInspector] public double[] mass_star; //kg
@@ -253,6 +261,14 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public double[] obsFlux_star_surface;
     [HideInInspector] public double[] appMagn_star; //実視等級 
     [HideInInspector] public double[] appDiameter_star;
+
+    [Header("軌道 (共通重心に入っている恒星だけが公転する)")]
+    [HideInInspector] public PlanetParentTypes[] parentType_star; //親(共通重心)のタイプ
+    [HideInInspector] public int[] parentIndex_star; //親の番号。-1なら星系の原点に固定
+    [HideInInspector] public double[] semiMajorAxis_star; //km。負なら重心をはさんで反対側(連星の天体A)
+    [HideInInspector] public double[] eccentricity_star; //離心率
+    [HideInInspector] public double[] argOfPeri_star; //近点引数
+    [HideInInspector] public double[] orbitalPeriod_star; //公転周期(秒) 0なら公転しない
 
     [Header("座標")]
     [HideInInspector] public bool[] isStatic;
@@ -273,10 +289,13 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public MeshRenderer[] mesh_planet;
     [HideInInspector] public Texture2D[] tex_planet;
     [HideInInspector] public MaterialPropertyBlock[] mesh_planet_block;
-    [HideInInspector] public MeshRenderer[] point_planet; //光点(本体の子)。Importerが設定
-    [HideInInspector] public MeshRenderer[] glare_planet; //光芒(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] point_planet; //光点・光芒(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] spike_planet; //回折スパイク(本体の子)。Importerが設定
+    [HideInInspector] public bool[] isUsePSF_planet; //回折スパイクにPSFテクスチャを使うか。Importerが設定
     private MaterialPropertyBlock[] pointBlock_planet, pointBlock_star;
-    private MaterialPropertyBlock[] glareBlock_planet, glareBlock_star;
+    private MaterialPropertyBlock[] spikeBlock_planet, spikeBlock_star;
+    private float[] spikeIntensity_planet, spikeIntensity_star; //回折スパイク・PSFの強さの大きい方(天体どうしの遮蔽判定の前)
+    private Vector3[] spikeDir_planet, spikeDir_star; //回折スパイクの発光中心の向き(天球の中心から、Unity座標)
 
     //描画順(RenderQueueはMaterialPropertyBlockで変えられないため、実行時に天体ごとのマテリアルを複製して持つ)
     private Material[] mat_planet, mat_star;
@@ -285,7 +304,7 @@ public class StarSystemManager : UdonSharpBehaviour
     private MaterialPropertyBlock[] renderBlock_planet, renderBlock_star; //描画順の深度を渡す
 
     [Header("軌道特性")]
-     public double[] semiMajorAxis_planet; //km
+     public double[] semiMajorAxis_planet; //km。負なら重心をはさんで反対側(連星の天体A)
     [HideInInspector] public double[] eccentricity_planet; //離心率
     [HideInInspector] public double[] inclination_planet; //軌道傾斜角
     [HideInInspector] public double[] argOfPeri_planet; //近点引数
@@ -313,6 +332,23 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public double[] distance_planet;
     [HideInInspector] public double[] meanAnomaly_planet;
     [HideInInspector] public float[] height_planet, height_planet_angle;
+
+    //共通重心(連星)ここから。天体A・Bは重心の周りを同じ離心率・周期で反対側を回る(軌道要素はImporterが天体側に設定する)
+    [Header("共通重心")]
+    [HideInInspector] public string[] name_bary;
+    [HideInInspector] public PlanetParentTypes[] parentType_bary; //親のタイプ
+    [HideInInspector] public int[] parentIndex_bary; //親の番号。-1なら星系の原点に固定
+    [HideInInspector] public double[] semiMajorAxis_bary; //親の周りの軌道長半径(km)。負なら親の重心をはさんで反対側
+    [HideInInspector] public double[] eccentricity_bary; //離心率
+    [HideInInspector] public double[] argOfPeri_bary; //近点引数
+    [HideInInspector] public double[] orbitalPeriod_bary; //公転周期(秒) 0なら公転しない
+    [HideInInspector] public double[] mass_bary; //中の天体の質量の合計(kg)
+    [HideInInspector] public int[] rootStar_bary; //光源とみなす恒星(中の最も重い恒星。恒星がなければ親をたどった先の恒星)
+    [HideInInspector] public Vector3[] position_bary;
+
+    //公転の計算順(親が先)。type は PlanetParentTypes(恒星・惑星・共通重心)の数値、index はその番号。Importerが設定
+    [HideInInspector] public int[] orbitOrderType;
+    [HideInInspector] public int[] orbitOrderIndex;
 
 
     [Header("物理特性")]
@@ -807,7 +843,9 @@ public class StarSystemManager : UdonSharpBehaviour
             double period_orbit = orbitalPeriod_planet != null && bodyIndex < orbitalPeriod_planet.Length ? orbitalPeriod_planet[bodyIndex] : 0;
             double m = CalcMeanAnomaly(GetSimSeconds(), period_orbit, argOfPeri_planet[bodyIndex]);
             double y = m + TIDAL_LOCK_OFFSET; //mは0〜360
-            if (y >= 360.0) { y -= 360.0; }
+            //連星の天体A(軌道長半径が負)は重心をはさんで反対側にいるので、向きも反転する
+            if (semiMajorAxis_planet != null && bodyIndex < semiMajorAxis_planet.Length && semiMajorAxis_planet[bodyIndex] < 0) { y += 180.0; }
+            y -= Math.Floor(y / 360.0) * 360.0;
             yawing = (float)y;
             return;
         }
@@ -855,8 +893,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
         for (int i = 0; i < name_star.Length; i++)
         {
-            position_star[i] = new Vector3(0,0,0);
-
+            //恒星の位置は PlanetPositionUpdate が決める(共通重心に入っていなければ原点)
             positionRelative_star[i] = position_star[i] - obs_position; //相対位置を求める
 
 
@@ -923,40 +960,92 @@ public class StarSystemManager : UdonSharpBehaviour
         }
     }
 
+    /// <summary>
+    /// 恒星・惑星・共通重心の位置を公転で求める。親の位置が先に決まるよう、Importer が並べた orbitOrderType / orbitOrderIndex の順に計算する。
+    /// 共通重心に入っていない恒星は星系の原点に固定する。
+    /// </summary>
     public void PlanetPositionUpdate()
     {
         double simSeconds = GetSimSeconds();
-        //Importerで再インポートする前は公転周期がないので、公転させない
-        bool hasPeriod = orbitalPeriod_planet != null && orbitalPeriod_planet.Length == name_planet.Length;
 
-        //主星が惑星の天体は、主星の位置が確定してから計算する(pass 0: 主星が惑星以外、pass 1: 主星が惑星)
-        for (int pass = 0; pass < 2; pass++)
-        for (int i = 0; i < name_planet.Length; i++)
+        //再インポート前で計算順がないときは、従来どおり惑星だけを2回に分けて計算する(主星が惑星以外 → 主星が惑星)
+        if (orbitOrderType == null || orbitOrderIndex == null || orbitOrderType.Length != orbitOrderIndex.Length || orbitOrderType.Length == 0)
         {
-            bool isPlanetParent = parentType_planet[i] == PlanetParentTypes.Planet;
-            if (isPlanetParent != (pass == 1)) { continue; }
-
-            Vector3 parentPos = Vector3.zero;
-
-            switch (parentType_planet[i])
+            for (int pass = 0; pass < 2; pass++)
+            for (int i = 0; i < name_planet.Length; i++)
             {
-                case PlanetParentTypes.Star:
-                    parentPos = position_star[parentIndex_planet[i]];
-                    break;
-                case PlanetParentTypes.Planet:
-                    parentPos = position_planet[parentIndex_planet[i]];
-                    break;
-                case PlanetParentTypes.Moon:
-                    break;
+                bool isPlanetParent = parentType_planet[i] == PlanetParentTypes.Planet;
+                if (isPlanetParent != (pass == 1)) { continue; }
+                UpdatePlanetOrbit(i, simSeconds);
             }
-
-            //平均近点角 = 経過時間 / 公転周期 + 近点引数
-            meanAnomaly_planet[i] = CalcMeanAnomaly(simSeconds, hasPeriod ? orbitalPeriod_planet[i] : 0, argOfPeri_planet[i]);
-            position_planet[i] = parentPos + CalcOrbitPosition(semiMajorAxis_planet[i], eccentricity_planet[i], meanAnomaly_planet[i]);
-
-            rotation_planet[i] = Quaternion.Euler(rotationAxis_planet[i], 0, 0);
-
+            return;
         }
+
+        for (int k = 0; k < orbitOrderType.Length; k++)
+        {
+            int type = orbitOrderType[k];
+            int idx = orbitOrderIndex[k];
+            if (type == (int)PlanetParentTypes.Planet) { UpdatePlanetOrbit(idx, simSeconds); }
+            else if (type == (int)PlanetParentTypes.Star) { UpdateStarOrbit(idx, simSeconds); }
+            else if (type == (int)PlanetParentTypes.BaryCenter) { UpdateBaryOrbit(idx, simSeconds); }
+        }
+    }
+
+    //惑星の位置: 親の位置 + 公転軌道上の位置。平均近点角 = 経過時間 / 公転周期 + 近点引数
+    private void UpdatePlanetOrbit(int i, double simSeconds)
+    {
+        //Importerで再インポートする前は公転周期がないので、公転させない
+        double period = orbitalPeriod_planet != null && i < orbitalPeriod_planet.Length ? orbitalPeriod_planet[i] : 0;
+        Vector3 parentPos = GetBodyPosition(parentType_planet[i], parentIndex_planet[i]);
+
+        meanAnomaly_planet[i] = CalcMeanAnomaly(simSeconds, period, argOfPeri_planet[i]);
+        position_planet[i] = parentPos + CalcOrbitPosition(semiMajorAxis_planet[i], eccentricity_planet[i], meanAnomaly_planet[i]);
+
+        rotation_planet[i] = Quaternion.Euler(rotationAxis_planet[i], 0, 0);
+    }
+
+    //恒星の位置: 共通重心に入っていなければ星系の原点
+    private void UpdateStarOrbit(int i, double simSeconds)
+    {
+        if (parentIndex_star == null || i >= parentIndex_star.Length || parentIndex_star[i] < 0)
+        {
+            position_star[i] = Vector3.zero;
+            return;
+        }
+
+        Vector3 parentPos = GetBodyPosition(parentType_star[i], parentIndex_star[i]);
+        double m = CalcMeanAnomaly(simSeconds, orbitalPeriod_star[i], argOfPeri_star[i]);
+        position_star[i] = parentPos + CalcOrbitPosition(semiMajorAxis_star[i], eccentricity_star[i], m);
+    }
+
+    //共通重心の位置: 親がなければ星系の原点
+    private void UpdateBaryOrbit(int i, double simSeconds)
+    {
+        if (parentIndex_bary[i] < 0)
+        {
+            position_bary[i] = Vector3.zero;
+            return;
+        }
+
+        Vector3 parentPos = GetBodyPosition(parentType_bary[i], parentIndex_bary[i]);
+        double m = CalcMeanAnomaly(simSeconds, orbitalPeriod_bary[i], argOfPeri_bary[i]);
+        position_bary[i] = parentPos + CalcOrbitPosition(semiMajorAxis_bary[i], eccentricity_bary[i], m);
+    }
+
+    //天体(恒星・惑星・共通重心)の位置。番号が範囲外なら原点
+    private Vector3 GetBodyPosition(PlanetParentTypes type, int index)
+    {
+        if (index < 0) { return Vector3.zero; }
+        switch (type)
+        {
+            case PlanetParentTypes.Star:
+                return index < position_star.Length ? position_star[index] : Vector3.zero;
+            case PlanetParentTypes.Planet:
+                return index < position_planet.Length ? position_planet[index] : Vector3.zero;
+            case PlanetParentTypes.BaryCenter:
+                return position_bary != null && index < position_bary.Length ? position_bary[index] : Vector3.zero;
+        }
+        return Vector3.zero;
     }
 
     //J2000からの経過秒数(sd_resはStartで決まるので、それまではsDateをミリ秒として扱う)
@@ -1054,6 +1143,8 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_exposureness[lightIndex_planet[i]] = 0f;
 
                 L_isLanded[lightIndex_planet[i]] = true;
+
+                if (spikeIntensity_planet != null && i < spikeIntensity_planet.Length) { spikeIntensity_planet[i] = 0f; }
 
                 //Debug.Log("landed:" + body_planet[obs_body_index].name);
 
@@ -1176,9 +1267,14 @@ public class StarSystemManager : UdonSharpBehaviour
                 float cosPhase = Vector3.Dot(stp, otp); //位相角(恒星-惑星-観測者)のcos。1で満ちている
                 Vector4 phaseDir = new Vector4(toLightUnity.x, toLightUnity.y, toLightUnity.z, PHOTOCENTER_COEF * (1f - cosPhase));
 
-                UpdatePoint(GetRenderer(point_planet, i), GetBlock(pointBlock_planet, i),
-                    GetRenderer(glare_planet, i), GetBlock(glareBlock_planet, i),
-                    (float)appDiameter_planet[i], CalcVisMagnitude(flux_planet_obs_surface[i]), pointCol, phaseDir);
+                float spikeIntensity = UpdatePoint(GetRenderer(point_planet, i), GetBlock(pointBlock_planet, i),
+                    GetRenderer(spike_planet, i), GetBlock(spikeBlock_planet, i),
+                    (float)appDiameter_planet[i], CalcVisMagnitude(flux_planet_obs_surface[i]), pointCol, phaseDir, GetFlag(isUsePSF_planet, i));
+                if (spikeIntensity_planet != null && i < spikeIntensity_planet.Length)
+                {
+                    spikeIntensity_planet[i] = spikeIntensity;
+                    spikeDir_planet[i] = CalcPhotocenterDir(view_position_planetUnity[i], phaseDir, (float)appDiameter_planet[i]);
+                }
             }
 
             //Debug.Log(i + " " + body_planet[i].name + ", flux:" + flux * phase);
@@ -1279,9 +1375,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
         for (int i = 0; i < name_star.Length; i++)
         {
-
-            position_star[i] = new Vector3(0, 0, 0);
-
+            //恒星の位置は PlanetPositionUpdate が決める(共通重心に入っていなければ原点)
             positionRelative_star[i] = position_star[i] - obs_position; //相対位置を求める
 
 
@@ -1361,14 +1455,22 @@ public class StarSystemManager : UdonSharpBehaviour
             {
                 Color pointCol = TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[i], 1.0f)
                     * GetReyleighColor((float)airmass, 0.35f);
-                UpdatePoint(GetRenderer(point_star, i), GetBlock(pointBlock_star, i),
-                    GetRenderer(glare_star, i), GetBlock(glareBlock_star, i),
-                    starDiameterDeg, CalcVisMagnitude(obsFlux_star_surface[i]), pointCol, Vector4.zero);
+                float spikeIntensity = UpdatePoint(GetRenderer(point_star, i), GetBlock(pointBlock_star, i),
+                    GetRenderer(spike_star, i), GetBlock(spikeBlock_star, i),
+                    starDiameterDeg, CalcVisMagnitude(obsFlux_star_surface[i]), pointCol, Vector4.zero, GetFlag(isUsePSF_star, i));
+                if (spikeIntensity_star != null && i < spikeIntensity_star.Length)
+                {
+                    spikeIntensity_star[i] = spikeIntensity;
+                    spikeDir_star[i] = view_position_starUnity[i].normalized;
+                }
             }
 
 
             //Debug.Log("obsFlux: " + obsFlux_star[i]);
         }
+
+        //回折スパイクの天体どうしの遮蔽判定(惑星・恒星の位置がすべて決まった後に行う)
+        UpdateSpikeOcclusion();
     }
 
     /// <summary>
@@ -1459,9 +1561,8 @@ public class StarSystemManager : UdonSharpBehaviour
                     renderQueue_planet[a] = queue;
                     depthRank_planet[a] = farther;
                     SetOrderedDepth(mesh_planet[a], renderBlock_planet[a], farther);
-                    //光点・光芒も本体と同じ深度にして、手前の天体に隠れるようにする
+                    //光点・光芒も本体と同じ深度にして、手前の天体に隠れるようにする(回折スパイクは UpdateSpikeOcclusion で判定する)
                     SetOrderedDepthIfExists(GetRenderer(point_planet, a), GetBlock(pointBlock_planet, a), farther);
-                    SetOrderedDepthIfExists(GetRenderer(glare_planet, a), GetBlock(glareBlock_planet, a), farther);
                 }
             }
             else
@@ -1474,7 +1575,6 @@ public class StarSystemManager : UdonSharpBehaviour
                     depthRank_star[s] = farther;
                     SetOrderedDepth(mesh_star[s], renderBlock_star[s], farther);
                     SetOrderedDepthIfExists(GetRenderer(point_star, s), GetBlock(pointBlock_star, s), farther);
-                    SetOrderedDepthIfExists(GetRenderer(glare_star, s), GetBlock(glareBlock_star, s), farther);
                 }
             }
         }
@@ -1509,14 +1609,87 @@ public class StarSystemManager : UdonSharpBehaviour
     }
 
     /// <summary>
-    /// 光点・光芒の MaterialPropertyBlock を、それぞれの数に合わせて確保する(エディタ上の OnValidate からも呼ばれるため、必要なときに作る)。
+    /// 光点・光芒と回折スパイクの MaterialPropertyBlock と、遮蔽判定用の配列を確保する(エディタ上の OnValidate からも呼ばれるため、必要なときに作る)。
     /// </summary>
     private void EnsurePointBlocks()
     {
         pointBlock_planet = EnsureBlocks(pointBlock_planet, point_planet);
         pointBlock_star = EnsureBlocks(pointBlock_star, point_star);
-        glareBlock_planet = EnsureBlocks(glareBlock_planet, glare_planet);
-        glareBlock_star = EnsureBlocks(glareBlock_star, glare_star);
+        spikeBlock_planet = EnsureBlocks(spikeBlock_planet, spike_planet);
+        spikeBlock_star = EnsureBlocks(spikeBlock_star, spike_star);
+
+        if (spikeIntensity_planet == null || spikeIntensity_planet.Length != name_planet.Length)
+        {
+            spikeIntensity_planet = new float[name_planet.Length];
+            spikeDir_planet = new Vector3[name_planet.Length];
+        }
+        if (spikeIntensity_star == null || spikeIntensity_star.Length != name_star.Length)
+        {
+            spikeIntensity_star = new float[name_star.Length];
+            spikeDir_star = new Vector3[name_star.Length];
+        }
+    }
+
+    /// <summary>
+    /// 回折スパイクの発光中心(光度中心)の向き。天体の向きを、光源の方向へ角半径 × phaseDir.w だけ傾ける(シェーダーの中心のずらしと同じ)。
+    /// </summary>
+    /// <param name="viewPos">天球の中心から天体への位置(Unity座標)</param>
+    /// <param name="phaseDir">xyz:天体から光源への向き w:光度中心のずれ(角半径に対する割合)</param>
+    /// <param name="appDiameterDeg">視直径(度)</param>
+    private Vector3 CalcPhotocenterDir(Vector3 viewPos, Vector4 phaseDir, float appDiameterDeg)
+    {
+        Vector3 dir = viewPos.normalized;
+        Vector3 toLight = new Vector3(phaseDir.x, phaseDir.y, phaseDir.z);
+        Vector3 side = toLight - Vector3.Dot(toLight, dir) * dir; //視線に垂直な成分(画面に投影した光源の向き)
+        if (side.sqrMagnitude < 1e-10f) { return dir; }
+        float tanHalf = Mathf.Tan(Mathf.Min(appDiameterDeg * 0.5f * Mathf.Deg2Rad, 1.4f));
+        return (dir + side.normalized * tanHalf * phaseDir.w).normalized;
+    }
+
+    /// <summary>
+    /// 回折スパイクの表示を決める。発光中心が手前の天体の円盤に重なっていれば描かない。
+    /// 天体本体は _CameraDepthTexture に入らない(加算合成の透明物)ため、天体どうしの遮蔽はここで判定する。地表のオブジェクトによる遮蔽はシェーダーで判定する。
+    /// すべての天体の位置が決まった後(UpdateStar の最後)に呼ぶ。
+    /// </summary>
+    private void UpdateSpikeOcclusion()
+    {
+        int planetNum = name_planet.Length;
+        int total = planetNum + name_star.Length;
+        for (int a = 0; a < total; a++)
+        {
+            bool isPlanet = a < planetNum;
+            int idx = isPlanet ? a : a - planetNum;
+            MeshRenderer spike = isPlanet ? GetRenderer(spike_planet, idx) : GetRenderer(spike_star, idx);
+            if (spike == null) { continue; }
+
+            float intensity = isPlanet ? spikeIntensity_planet[idx] : spikeIntensity_star[idx];
+            bool isVisible = intensity > 0f; //NaNは描かない側に倒す
+            if (isVisible)
+            {
+                Vector3 dir = isPlanet ? spikeDir_planet[idx] : spikeDir_star[idx];
+                double distA = GetRenderDistance(a);
+                for (int b = 0; b < total; b++)
+                {
+                    if (b == a) { continue; }
+                    double distB = GetRenderDistance(b);
+                    if (distB < 0 || distB >= distA) { continue; } //手前の天体だけ
+                    bool isPlanetB = b < planetNum;
+                    int idxB = isPlanetB ? b : b - planetNum;
+                    Vector3 posB = isPlanetB ? view_position_planetUnity[idxB] : view_position_starUnity[idxB];
+                    float radB = (float)(isPlanetB ? appDiameter_planet[idxB] : appDiameter_star[idxB]) * 0.5f; //角半径(度)
+                    if (Vector3.Angle(dir, posB) < radB)
+                    {
+                        isVisible = false;
+                        break;
+                    }
+                }
+            }
+
+            if (spike.enabled != isVisible)
+            {
+                spike.enabled = isVisible;
+            }
+        }
     }
 
     //renderers と同じ長さの MaterialPropertyBlock 配列を返す(長さが合っていればそのまま)
@@ -1548,20 +1721,29 @@ public class StarSystemManager : UdonSharpBehaviour
         return (blocks != null && i < blocks.Length) ? blocks[i] : null;
     }
 
+    //配列が未設定・範囲外なら false を返す(再インポート前の古いデータでも動くようにする)
+    private bool GetFlag(bool[] flags, int i)
+    {
+        return flags != null && i < flags.Length && flags[i];
+    }
+
     /// <summary>
-    /// 光点・回折スパイク(point)と光芒(glare)の色・明るさ・大きさを設定する。
+    /// 光点・光芒(point)と回折スパイク(spike)の色・明るさ・大きさを設定し、回折スパイクの強さを返す。
     /// 光点：大きさと明るさは等級に合わせて、限界等級(昼間は地上の全光量から下げる)で0、pointMagnBright で最大にする。
     ///       視直径が meshCullDiameter 以下では最大、meshCullDiameter × pointFadeRatio で0になり、その間はメッシュと重ねて切り替える。
-    /// 回折スパイク：表面輝度の等級(分解能 resolvingPower でクリップ)が spikeMagnThreshold より明るいとき、光点とは関係なく描く。
-    ///       明るさと長さは表面輝度、太さは視直径で決める(長さに上限、太さに下限のピクセル数)。
     /// 光芒：光点が消えた視直径(meshCullDiameter × pointFadeRatio)から出始め、その glareFadeRatio 倍で最大になる。外縁は角半径 × (1 + glareSizeScale × 輝度係数)、強さも輝度係数に比例。
     ///       輝度係数は表面輝度の等級(glareMagnDim で0、glareMagnBright で1)に、全体輝度による抑制(光点より強い)を掛けたもの。
+    /// 回折スパイク：表面輝度の等級(分解能 resolvingPower でクリップ)が spikeMagnThreshold より明るいとき、光点とは関係なく描く。
+    ///       明るさと長さは表面輝度で決める(長さに上限のピクセル数)。太さは spikeWidthMin × (視直径 / 分解能)^spikeWidthExponent(視直径は分解能でクリップ)。
+    ///       点広がり関数(PSF、observerPSF)も同じオブジェクトに描く。強さと大きさは点光源とみなしたときの相対輝度(等級)から決め、視直径は使わない。
+    ///       表示/非表示は天体どうしの遮蔽と合わせて UpdateSpikeOcclusion で決める。
     /// </summary>
     /// <param name="appDiameterDeg">視直径(度)</param>
     /// <param name="appMagn">大気減光後の等級</param>
     /// <param name="phaseDir">xyz:天体から光源への向き(Unity座標) w:光度中心のずれ(角半径に対する割合)。恒星は0</param>
-    private void UpdatePoint(MeshRenderer point, MaterialPropertyBlock pointBlock, MeshRenderer glare, MaterialPropertyBlock glareBlock,
-        float appDiameterDeg, double appMagn, Color col, Vector4 phaseDir)
+    /// <param name="isUsePSF">PSFを使うか(falseならPSFの計算もテクスチャの設定もしない。マテリアルもテクスチャを使わないバリアント)</param>
+    private float UpdatePoint(MeshRenderer point, MaterialPropertyBlock pointBlock, MeshRenderer spike, MaterialPropertyBlock spikeBlock,
+        float appDiameterDeg, double appMagn, Color col, Vector4 phaseDir, bool isUsePSF)
     {
         float diameterArcmin = appDiameterDeg * 60f;
         float angRad = appDiameterDeg * 0.5f * Mathf.Deg2Rad;
@@ -1583,49 +1765,6 @@ public class StarSystemManager : UdonSharpBehaviour
             float t = Mathf.InverseLerp(limit, pointMagnBright, m); //0:限界等級 1:最大
             float pointIntensity = (isUsePoint && fade > 0f && m < limit) ? pointBrightness * t * fade : 0f; //NaNは0に倒す
 
-            //回折スパイク。表面輝度の等級 = 等級 + 5 log10(視直径 / 太陽の視直径)。分解能より小さい天体は分解能の円盤に光が広がるとみなす
-            float spikeIntensity = 0f;
-            float spikeLength = 0f;
-            if (isUseSpike)
-            {
-                float sbMagn = m + 5f * Mathf.Log10(Mathf.Max(diameterArcmin, resolvingPower) / SUN_DIAMETER_ARCMIN);
-                float over = spikeMagnThreshold - sbMagn; //出始めより何等明るいか
-                if (over > 0f)
-                {
-                    spikeIntensity = spikeBrightness * Mathf.Clamp01(over / spikeFadeMagn);
-                    spikeLength = Mathf.Min(spikeLengthMax, spikeLengthPerMagn * over);
-                }
-            }
-
-            bool isPointVisible = pointIntensity > 0f || spikeIntensity > 0f; //回折スパイクは光点とは関係なく出す
-            if (point.enabled != isPointVisible)
-            {
-                point.enabled = isPointVisible;
-            }
-            if (isPointVisible)
-            {
-                //BrightPoint は brightPointMagn から2等かけて強める
-                float brightPoint = brightPointStrength * Mathf.Clamp01((brightPointMagn - m) * 0.5f);
-
-                point.GetPropertyBlock(pointBlock);
-                pointBlock.SetColor("_Color", col);
-                pointBlock.SetFloat("_pointIntensity", pointIntensity);
-                pointBlock.SetFloat("_pointSize", Mathf.Lerp(pointSizeMin, pointSizeMax, t));
-                pointBlock.SetFloat("_brightPointStrength", brightPoint);
-                pointBlock.SetFloat("_spikeIntensity", spikeIntensity);
-                pointBlock.SetFloat("_spikeCount", spikeCount);
-                pointBlock.SetFloat("_spikeAngle", spikeAngle);
-                pointBlock.SetFloat("_spikeLength", spikeLength);
-                pointBlock.SetFloat("_spikeWidthRatio", spikeWidthRatio);
-                pointBlock.SetFloat("_spikeWidthMin", spikeWidthMin);
-                pointBlock.SetFloat("_bodyAngularRadius", angRad);
-                pointBlock.SetVector("_phaseDir", phaseDir);
-                point.SetPropertyBlock(pointBlock);
-            }
-        }
-
-        if (glare != null && glareBlock != null)
-        {
             //光芒の輝度係数。表面輝度の等級 = 等級 + 5 log10(視直径 / 太陽の視直径)
             float glareT = 0f;
             if (diameterArcmin > 0f)
@@ -1643,22 +1782,74 @@ public class StarSystemManager : UdonSharpBehaviour
             float glareFade = Mathf.InverseLerp(glareStart, glareStart * glareFadeRatio, diameterArcmin);
             float glareIntensity = isUseGlare ? glareBrightness * glareT * glareFade : 0f;
 
-            bool isGlareVisible = glareIntensity > 0f; //NaNは描かない側に倒す
-            if (glare.enabled != isGlareVisible)
+            bool isPointVisible = pointIntensity > 0f || glareIntensity > 0f; //NaNは描かない側に倒す
+            if (point.enabled != isPointVisible)
             {
-                glare.enabled = isGlareVisible;
+                point.enabled = isPointVisible;
             }
-            if (isGlareVisible)
+            if (isPointVisible)
             {
-                glare.GetPropertyBlock(glareBlock);
-                glareBlock.SetColor("_Color", col);
-                glareBlock.SetFloat("_glareIntensity", glareIntensity);
-                glareBlock.SetFloat("_glareAngularRadius", angRad * (1f + glareSizeScale * glareT));
-                glareBlock.SetFloat("_bodyAngularRadius", angRad);
-                glareBlock.SetVector("_phaseDir", phaseDir);
-                glare.SetPropertyBlock(glareBlock);
+                //BrightPoint は brightPointMagn から2等かけて強める
+                float brightPoint = brightPointStrength * Mathf.Clamp01((brightPointMagn - m) * 0.5f);
+
+                point.GetPropertyBlock(pointBlock);
+                pointBlock.SetColor("_Color", col);
+                pointBlock.SetFloat("_pointIntensity", pointIntensity);
+                pointBlock.SetFloat("_pointSize", Mathf.Lerp(pointSizeMin, pointSizeMax, t));
+                pointBlock.SetFloat("_brightPointStrength", brightPoint);
+                pointBlock.SetFloat("_glareIntensity", glareIntensity);
+                pointBlock.SetFloat("_glareAngularRadius", angRad * (1f + glareSizeScale * glareT));
+                pointBlock.SetFloat("_bodyAngularRadius", angRad);
+                pointBlock.SetVector("_phaseDir", phaseDir);
+                point.SetPropertyBlock(pointBlock);
             }
         }
+
+        float spikeIntensity = 0f;
+        float psfIntensity = 0f;
+        if (spike != null && spikeBlock != null && isUseSpike)
+        {
+            //回折スパイク。表面輝度の等級 = 等級 + 5 log10(視直径 / 太陽の視直径)。分解能より小さい天体は分解能の円盤に光が広がるとみなす
+            float sourceArcmin = Mathf.Max(diameterArcmin, resolvingPower);
+            float sbMagn = m + 5f * Mathf.Log10(sourceArcmin / SUN_DIAMETER_ARCMIN);
+            float over = spikeMagnThreshold - sbMagn; //出始めより何等明るいか
+            float spikeLength = 0f;
+            if (over > 0f)
+            {
+                spikeIntensity = spikeBrightness * Mathf.Clamp01(over / spikeFadeMagn);
+                spikeLength = Mathf.Min(spikeLengthMax, spikeLengthPerMagn * over);
+            }
+
+            //PSF。点光源とみなしたときの相対輝度(等級)から決め、視直径は使わない
+            float psfOver = psfMagnThreshold - m; //出始めより何等明るいか
+            float psfSize = 0f;
+            if (isUsePSF && psfOver > 0f)
+            {
+                psfIntensity = psfBrightness * Mathf.Clamp01(psfOver / psfFadeMagn);
+                psfSize = Mathf.Min(psfSizeMax, psfSizePerMagn * psfOver);
+            }
+
+            if (spikeIntensity > 0f || psfIntensity > 0f) //NaNは描かない側に倒す
+            {
+                spike.GetPropertyBlock(spikeBlock);
+                spikeBlock.SetColor("_Color", col);
+                spikeBlock.SetFloat("_spikeIntensity", spikeIntensity);
+                spikeBlock.SetFloat("_spikeCount", spikeCount);
+                spikeBlock.SetFloat("_spikeAngle", spikeAngle);
+                spikeBlock.SetFloat("_spikeLength", spikeLength);
+                //太さは分解能の大きさで spikeWidthMin、そこから視直径に応じて太くする(画面の解像度・視野角によらない)
+                spikeBlock.SetFloat("_spikeWidth", spikeWidthMin * Mathf.Pow(sourceArcmin / Mathf.Max(resolvingPower, 0.01f), spikeWidthExponent));
+                if (isUsePSF && observerPSF != null) { spikeBlock.SetTexture("_observerPSF", observerPSF); }
+                spikeBlock.SetFloat("_psfIntensity", psfIntensity);
+                spikeBlock.SetFloat("_psfSize", psfSize);
+                spikeBlock.SetFloat("_bodyAngularRadius", angRad);
+                spikeBlock.SetVector("_phaseDir", phaseDir);
+                spikeBlock.SetFloat("_occlusionDepth", spikeOcclusionDepth);
+                spike.SetPropertyBlock(spikeBlock);
+            }
+        }
+        //スパイクの Renderer は回折スパイクかPSFのどちらかがあれば表示する(UpdateSpikeOcclusion で判定)
+        return Mathf.Max(spikeIntensity, psfIntensity);
     }
 
     /// <summary>
@@ -1911,6 +2102,14 @@ public class StarSystemManager : UdonSharpBehaviour
             if (parentType_planet[idx] == PlanetParentTypes.Star)
             {
                 return parentIndex_planet[idx];
+            }
+
+            //共通重心: Importer が決めた光源の恒星(中の最も重い恒星か、親をたどった先の恒星)
+            if (parentType_planet[idx] == PlanetParentTypes.BaryCenter)
+            {
+                int bary = parentIndex_planet[idx];
+                if (rootStar_bary != null && bary >= 0 && bary < rootStar_bary.Length && rootStar_bary[bary] >= 0) { return rootStar_bary[bary]; }
+                break;
             }
 
             if (parentType_planet[idx] != PlanetParentTypes.Planet)
@@ -2866,11 +3065,13 @@ public class StarSystemManager : UdonSharpBehaviour
 
 }
 
+//数値でシリアライズされるので、追加は末尾に行う
 public enum PlanetParentTypes
 {
     Star,
     Planet,
-    Moon
+    Moon,
+    BaryCenter //共通重心(連星)
 }
 
 namespace StellarEngine_Bodys
@@ -2886,6 +3087,16 @@ namespace StellarEngine_Bodys
         public double mass; //kg
         public double rad; //km
         public double teff, lum; //温度、光度
+        public bool isUseSpike; //回折スパイクを使うか
+        public bool isUsePSF; //回折スパイクにPSFテクスチャを使うか
+
+        [Header("軌道 (共通重心に入っているときだけ使う)")]
+        public PlanetParentTypes parentType;
+        public int parentIndex = -1; //-1なら星系の原点に固定
+        public double semiMajorAxis; //km。負なら重心をはさんで反対側
+        public double eccentricity;
+        public double argOfPeri;
+        public double orbitalPeriod; //秒
 
         [Header("光学的要素")]
         [SerializeField] public Light lightObj;
@@ -2900,6 +3111,8 @@ namespace StellarEngine_Bodys
         public int index;
         public GameObject body;
         public bool isUseLight;
+        public bool isUseSpike; //回折スパイクを使うか
+        public bool isUsePSF; //回折スパイクにPSFテクスチャを使うか
         public Texture2D texture;
 
         [Header("軌道特性")]
@@ -2939,5 +3152,31 @@ namespace StellarEngine_Bodys
         public Color texMeanColor;
         public double albedoGeom;
         public double hapke;
+    }
+
+    //共通重心(連星)
+    [System.Serializable]
+    public class BaryCenter
+    {
+        public string name;
+        public int index;
+        public PlanetParentTypes[] memberType = new PlanetParentTypes[2]; //天体A・Bのタイプ
+        public int[] memberIndex = new int[] { -1, -1 }; //天体A・Bの番号(-1は見つからない)
+        public double mass; //天体A・Bの質量の合計(kg、スケーリング後)
+        public int rootStar = -1; //光源とみなす恒星
+
+        [Header("連星の軌道 (天体Aと天体Bの相対軌道)")]
+        public double binarySemiMajorAxis; //相対軌道長半径(km、スケーリング後)
+        public double binaryEccentricity;
+        public double binaryArgOfPeri;
+        public double binaryPeriod; //秒
+
+        [Header("親天体の周りの軌道")]
+        public PlanetParentTypes parentType;
+        public int parentIndex = -1; //-1なら星系の原点に固定
+        public double semiMajorAxis; //km。負なら親の重心をはさんで反対側
+        public double eccentricity;
+        public double argOfPeri;
+        public double orbitalPeriod; //秒
     }
 }

@@ -1,0 +1,93 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25a58ae1e3c3e514aad04d8662f20307, type: 3}
+  m_Name: Sirius
+  m_EditorClassIdentifier: 
+  starDatas:
+  - name: Sirius A
+    nameJP: 
+    specClass: 
+    mass: 2.02
+    rad: 1.711
+    teff: 9845
+    lum: 24.7
+    isUseSolarUnit: 1
+    isUseSpike: 1
+    isUsePSF: 1
+  - name: Sirius B
+    nameJP: 
+    specClass: 
+    mass: 1.01
+    rad: 0.008098
+    teff: 25369
+    lum: 0.02448
+    isUseSolarUnit: 1
+    isUseSpike: 1
+    isUsePSF: 1
+  planetDatas:
+  - name: MofuLow
+    nameJP: 
+    tex: {fileID: 2800000, guid: 1f4e85482dea15b47af3bdfe8d28dbb5, type: 3}
+    texMeanColor: {r: 0, g: 0, b: 0, a: 0}
+    smaInputType: 0
+    mrInputType: 2
+    isUseLight: 0
+    isUseSpike: 0
+    isUsePSF: 0
+    parentBody: Sirius B
+    lightReferenceBodys: []
+    isUseOcclusion: 0
+    occluderBodys: []
+    semiMajorAxis: 1
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1
+    rad: 1
+    albedoGeom: 0.24799999594688416
+    albedoBond: 0.19300000369548798
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  baryCenterDatas:
+  - name: Sirius
+    bodyA: Sirius A
+    bodyB: Sirius B
+    parentBody: 
+    smaInputType: 0
+    relativeSemiMajorAxis: 7.4954
+    semiMajorAxisA: 2.498466666666667
+    semiMajorAxisB: 4.996933333333334
+    eccentricity: 0.591
+    argOfPeri: 0
+    parentSmaInputType: 0
+    parentSemiMajorAxis: 0
+    parentEccentricity: 0
+    parentArgOfPeri: 0
+    parentPeriodInputType: 0
+    parentOrbitalPeriod: 0
+  testFloat: 0

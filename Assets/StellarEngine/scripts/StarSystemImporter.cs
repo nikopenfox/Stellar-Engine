@@ -17,8 +17,9 @@ public class StarSystemImporter : MonoBehaviour
     [Tooltip("恒星モデル")][SerializeField] private GameObject starBaseObj;
     [SerializeField, Tooltip("ライトベース")] private Light lightBaseObj;
     [Tooltip("天体モデル")][SerializeField] private GameObject celestialBodyBaseObj;
-    [Tooltip("光点・回折スパイクのオブジェクト")][SerializeField] private GameObject pointObj;
-    [Tooltip("光芒のオブジェクト")][SerializeField] private GameObject glareObj;
+    [Tooltip("光点・光芒のオブジェクト")][SerializeField] private GameObject pointObj;
+    [Tooltip("回折スパイクのオブジェクト")][SerializeField] private GameObject spikeObj;
+    [Tooltip("PSFを使わない天体の回折スパイクに割り当てるマテリアル(BodySpikeShader の UsePSF を OFF にしたもの)。未設定ならプレハブのまま")][SerializeField] private Material spikeMaterialNoPSF;
     [Tooltip("惑星のデフォルトテクスチャ")][SerializeField] private Texture2D celestialDefaultTex;
     [Tooltip("スケール")] [SerializeField]private double scale;
     [Tooltip("星をUnity上でどれくらいの距離に置くか")][SerializeField] private double distUnity;
@@ -26,6 +27,7 @@ public class StarSystemImporter : MonoBehaviour
     [Header("実行用中間ファイル")]
     public Star[] stars;
     public Planet[] planets;
+    public BaryCenter[] barys;
 
 
     [Header("更新")]
@@ -153,6 +155,8 @@ public class StarSystemImporter : MonoBehaviour
 
             st.teff = starData.teff;
             st.lum = starData.lum;
+            st.isUseSpike = starData.isUseSpike;
+            st.isUsePSF = starData.isUsePSF;
 
             cnt++; //配列番号を加算
 
@@ -207,59 +211,29 @@ public class StarSystemImporter : MonoBehaviour
             pl.texMeanColor = planetData.texMeanColor; //光点の色にも使うので、ライトを使わない惑星でも設定する
 
 
-            pl.parentType = SearchParent(planetData.parentBody, out pl.parentIndex);
+            //共通重心に入っている天体は parentBody を無視し、共通重心を親にする(軌道要素はすべての天体を読んだ後に設定する)
+            int memberBary = FindBaryOfMember(planetData.name);
+            if (memberBary != -1)
+            {
+                pl.parentType = PlanetParentTypes.BaryCenter;
+                pl.parentIndex = memberBary;
+            }
+            else
+            {
+                pl.parentType = SearchParent(planetData.parentBody, out pl.parentIndex);
+            }
 
-            //ライトソースの定義
-            //BaryCenterの場合は手動セットが必要
+            //ライトソースの定義。未設定なら、すべての天体を読んだ後に親をたどって決める(ResolveDefaultLightSources)
             if (planetData.lightReferenceBodys == null || planetData.lightReferenceBodys.Length == 0)
             {
-                switch (pl.parentType)
-                {
-                    case PlanetParentTypes.Star:
-                        pl.lightSourceType = new int[1];
-                        pl.lightSourceIndex = new int[1];
-                        pl.lightSourceBodyName = new string[1];
-
-                        pl.lightSourceBodyName[0] = SearchParentName(pl.parentType, pl.parentIndex);
-                        break;
-
-                    case PlanetParentTypes.Planet:
-                        pl.lightSourceType = new int[2];
-                        pl.lightSourceIndex = new int[2];
-                        pl.lightSourceBodyName = new string[2];
-
-
-                        pl.lightSourceBodyName[0] = SearchParentName(pl.parentType, pl.parentIndex, 1);
-                        pl.lightSourceBodyName[1] = SearchParentName(pl.parentType, pl.parentIndex);
-                        break;
-
-                    case PlanetParentTypes.Moon:
-                        pl.lightSourceType = new int[3];
-                        pl.lightSourceIndex = new int[3];
-                        pl.lightSourceBodyName = new string[3];
-
-                        pl.lightSourceBodyName[0] = SearchParentName(pl.parentType, pl.parentIndex, 2);
-                        pl.lightSourceBodyName[1] = SearchParentName(pl.parentType, pl.parentIndex, 1);
-                        pl.lightSourceBodyName[2] = SearchParentName(pl.parentType, pl.parentIndex, 0);
-
-                        break;
-                }
+                pl.lightSourceBodyName = new string[0];
                 pl.isLightRefSet = false;
             }
             else
             {
-                pl.lightSourceType = new int[planetData.lightReferenceBodys.Length];
-                pl.lightSourceIndex = new int[planetData.lightReferenceBodys.Length];
-                pl.lightSourceBodyName = new string[planetData.lightReferenceBodys.Length];
-                for (int i = 0; i < planetData.lightReferenceBodys.Length; i++)
-                {
-                    pl.lightSourceBodyName[i] = planetData.lightReferenceBodys[i];
-                }
+                pl.lightSourceBodyName = (string[])planetData.lightReferenceBodys.Clone();
                 pl.isLightRefSet = true;
             }
-
-            //光源名からタイプ(0:恒星 1:惑星)とインデックスを求める
-            ResolveLightSources(pl);
 
 
 
@@ -292,6 +266,8 @@ public class StarSystemImporter : MonoBehaviour
             //自転周期(秒) 0なら自転しない、負なら逆行
             pl.rotationPeriod = PeriodToSeconds(planetData.rotationPeriod, planetData.rotationPeriodInputType);
             pl.isTidalLock = planetData.isTidalLock;
+            pl.isUseSpike = planetData.isUseSpike;
+            pl.isUsePSF = planetData.isUsePSF;
 
             //遮蔽判定(食)。天体名の解決と既定値の設定は、すべての天体を読んだ後に行う(衛星の半径が要るため)
             pl.isUseOcclusion = planetData.isUseOcclusion;
@@ -371,10 +347,13 @@ public class StarSystemImporter : MonoBehaviour
         stars = starsTmp.ToArray();
         planets = planetsTmp.ToArray();
 
-        //公転周期が設定されていない天体は、主星の質量から求める
+        //共通重心(連星)を読み、中の天体に重心の周りの軌道を設定する(公転周期を求める前に行う)
+        ReadBaryCenters();
+
+        //公転周期が設定されていない天体は、主星の質量から求める(共通重心に入っている天体は ReadBaryCenters で設定済み)
         foreach (var planet in planets)
         {
-            if (planet.orbitalPeriod <= 0)
+            if (planet.orbitalPeriod <= 0 && FindBaryOfMember(planet.name) == -1)
             {
                 planet.orbitalPeriod = CalcOrbitalPeriod(planet);
             }
@@ -392,6 +371,16 @@ public class StarSystemImporter : MonoBehaviour
             ResolveOccluders(planet);
         }
 
+        //光源。未設定なら親をたどって決め、名前からタイプ(0:恒星 1:惑星)とインデックスを求める
+        foreach (var planet in planets)
+        {
+            if (!planet.isLightRefSet)
+            {
+                planet.lightSourceBodyName = ResolveDefaultLightSources(planet);
+            }
+            ResolveLightSources(planet);
+        }
+
 
         //Managerに移す
 
@@ -402,7 +391,8 @@ public class StarSystemImporter : MonoBehaviour
         manager.body_star = new GameObject[stars.Length];
         manager.mesh_star = new MeshRenderer[stars.Length];
         manager.point_star = new MeshRenderer[stars.Length];
-        manager.glare_star = new MeshRenderer[stars.Length];
+        manager.spike_star = new MeshRenderer[stars.Length];
+        manager.isUsePSF_star = new bool[stars.Length];
 
 
         manager.specClass = new string[stars.Length];
@@ -425,6 +415,13 @@ public class StarSystemImporter : MonoBehaviour
         manager.height_star_angle = new float[stars.Length];
         manager.view_position_starUnity = new Vector3[stars.Length];
 
+        manager.parentType_star = new PlanetParentTypes[stars.Length];
+        manager.parentIndex_star = new int[stars.Length];
+        manager.semiMajorAxis_star = new double[stars.Length];
+        manager.eccentricity_star = new double[stars.Length];
+        manager.argOfPeri_star = new double[stars.Length];
+        manager.orbitalPeriod_star = new double[stars.Length];
+
         foreach (var star in stars)
         {
             var i = star.index;
@@ -433,7 +430,9 @@ public class StarSystemImporter : MonoBehaviour
             manager.body_star[i].transform.SetParent(manager.cSphere.transform);
             manager.mesh_star[i] = manager.body_star[i].GetComponent<MeshRenderer>();
             manager.point_star[i] = CreateBillboard(pointObj, manager.body_star[i], "_point");
-            manager.glare_star[i] = CreateBillboard(glareObj, manager.body_star[i], "_glare");
+            manager.spike_star[i] = star.isUseSpike ? CreateBillboard(spikeObj, manager.body_star[i], "_spike") : null; //使わない天体はオブジェクトを作らない
+            manager.isUsePSF_star[i] = star.isUsePSF;
+            ApplySpikeMaterial(manager.spike_star[i], star.isUsePSF);
 
             manager.specClass[i] = star.specClass;
             manager.mass_star[i] = star.mass;
@@ -442,6 +441,14 @@ public class StarSystemImporter : MonoBehaviour
             manager.lum[i] = star.lum;
 
             manager.lightObj_star[i] = star.lightObj;
+
+            //軌道(共通重心に入っていなければ親は -1 で、星系の原点に固定)
+            manager.parentType_star[i] = star.parentType;
+            manager.parentIndex_star[i] = star.parentIndex;
+            manager.semiMajorAxis_star[i] = star.semiMajorAxis;
+            manager.eccentricity_star[i] = star.eccentricity;
+            manager.argOfPeri_star[i] = star.argOfPeri;
+            manager.orbitalPeriod_star[i] = star.orbitalPeriod;
 
         }
 
@@ -457,7 +464,8 @@ public class StarSystemImporter : MonoBehaviour
         manager.mesh_planet = new MeshRenderer[planets.Length];
         manager.mesh_planet_block = new MaterialPropertyBlock[planets.Length];
         manager.point_planet = new MeshRenderer[planets.Length];
-        manager.glare_planet = new MeshRenderer[planets.Length];
+        manager.spike_planet = new MeshRenderer[planets.Length];
+        manager.isUsePSF_planet = new bool[planets.Length];
 
         manager.lightObj_planet = new Light[planets.Length];
         manager.lightBaseColor_planet = new Color[planets.Length];
@@ -530,7 +538,9 @@ public class StarSystemImporter : MonoBehaviour
             manager.mesh_planet[i] = manager.body_planet[i].GetComponent<MeshRenderer>();
             manager.mesh_planet_block[i] = new MaterialPropertyBlock();
             manager.point_planet[i] = CreateBillboard(pointObj, manager.body_planet[i], "_point");
-            manager.glare_planet[i] = CreateBillboard(glareObj, manager.body_planet[i], "_glare");
+            manager.spike_planet[i] = planet.isUseSpike ? CreateBillboard(spikeObj, manager.body_planet[i], "_spike") : null; //使わない天体はオブジェクトを作らない
+            manager.isUsePSF_planet[i] = planet.isUsePSF;
+            ApplySpikeMaterial(manager.spike_planet[i], planet.isUsePSF);
 
             manager.tex_planet[i] = planet.texture;
 
@@ -570,6 +580,35 @@ public class StarSystemImporter : MonoBehaviour
             manager.albedoBond[i] = planet.albedoBond;
 
         }
+
+        //共通重心(連星)
+        manager.name_bary = new string[barys.Length];
+        manager.parentType_bary = new PlanetParentTypes[barys.Length];
+        manager.parentIndex_bary = new int[barys.Length];
+        manager.semiMajorAxis_bary = new double[barys.Length];
+        manager.eccentricity_bary = new double[barys.Length];
+        manager.argOfPeri_bary = new double[barys.Length];
+        manager.orbitalPeriod_bary = new double[barys.Length];
+        manager.mass_bary = new double[barys.Length];
+        manager.rootStar_bary = new int[barys.Length];
+        manager.position_bary = new Vector3[barys.Length];
+
+        foreach (var bary in barys)
+        {
+            var i = bary.index;
+            manager.name_bary[i] = bary.name;
+            manager.parentType_bary[i] = bary.parentType;
+            manager.parentIndex_bary[i] = bary.parentIndex;
+            manager.semiMajorAxis_bary[i] = bary.semiMajorAxis;
+            manager.eccentricity_bary[i] = bary.eccentricity;
+            manager.argOfPeri_bary[i] = bary.argOfPeri;
+            manager.orbitalPeriod_bary[i] = bary.orbitalPeriod;
+            manager.mass_bary[i] = bary.mass;
+            manager.rootStar_bary[i] = bary.rootStar;
+        }
+
+        //公転の計算順(親が先)
+        BuildOrbitOrder();
 
         isUpdate = false;
 
@@ -654,25 +693,20 @@ public class StarSystemImporter : MonoBehaviour
     //軌道長半径はscale倍、質量はscale^3倍されているので、スケーリング後の値のまま計算しても周期は変わらない
     private double CalcOrbitalPeriod(Planet planet)
     {
-        double parentMass = 0;
-        switch (planet.parentType)
-        {
-            case PlanetParentTypes.Star:
-                if (planet.parentIndex >= 0 && planet.parentIndex < stars.Length) { parentMass = stars[planet.parentIndex].mass; }
-                break;
-            case PlanetParentTypes.Planet:
-                if (planet.parentIndex >= 0 && planet.parentIndex < planets.Length) { parentMass = planets[planet.parentIndex].mass; }
-                break;
-        }
+        //主星が共通重心なら、中の天体の質量の合計
+        double parentMass = GetScaledMass(planet.parentType, planet.parentIndex, 0);
+        return CalcKeplerPeriod(planet.semiMajorAxis, parentMass + planet.mass, planet.name);
+    }
 
-        double totalMass = parentMass + planet.mass;
-        if (planet.semiMajorAxis <= 0 || totalMass <= 0)
+    //ケプラーの第3法則 T = 2π√(a^3 / GM) (aはkm、Mはkg。どちらもスケーリング後の値でよい)。求められなければ0
+    private double CalcKeplerPeriod(double semiMajorAxis, double totalMass, string bodyName)
+    {
+        double a = System.Math.Abs(semiMajorAxis);
+        if (a <= 0 || totalMass <= 0)
         {
-            Debug.LogWarning(planet.name + " の公転周期を求められないため、公転させません (軌道長半径と主星の質量を確認してください)");
+            Debug.LogWarning(bodyName + " の公転周期を求められないため、公転させません (軌道長半径と主星の質量を確認してください)");
             return 0;
         }
-
-        double a = planet.semiMajorAxis;
         return 2 * System.Math.PI * System.Math.Sqrt(a * a * a / (GRAVITY * totalMass));
     }
 
@@ -694,6 +728,15 @@ public class StarSystemImporter : MonoBehaviour
         {
             isFound = true;
             return PlanetParentTypes.Planet;
+        }
+
+        //共通重心(連星の周りを回る惑星)
+        parentIndex = FindBaryIndex(parentName);
+
+        if (parentIndex != -1)
+        {
+            isFound = true;
+            return PlanetParentTypes.BaryCenter;
         }
 
         parentIndex = 0;
@@ -741,69 +784,6 @@ public class StarSystemImporter : MonoBehaviour
 
     }
 
-    private string SearchParentName(PlanetParentTypes type, int index)
-    {
-        switch(type)
-        {
-            case PlanetParentTypes.Star:
-                return asset.starDatas[index].name;
-
-            case PlanetParentTypes.Planet:
-                return asset.planetDatas[index].name;
-
-            case PlanetParentTypes.Moon:
-                return stars[index].name;
-
-        }
-
-        return "";
-    }
-
-    /// <summary>
-    /// 親天体のタイプとインデックスから名前を検索する。
-    /// </summary>
-    /// <param name="type"></param>
-    /// <param name="index"></param>
-    /// <param name="level">どの程度上の階層を指定するかのレベル。1なら親の親が検索される。</param>
-    /// <returns></returns>
-    private string SearchParentName(PlanetParentTypes type, int index, int level)
-    {
-        PlanetParentTypes curType = type;
-        int curIndex = index;
-        //levelの数だけ親をたどる(恒星より上の親はないので、恒星に着いたら止める)
-        for (int i = 0; i < level; i++)
-        {
-            if (curType != PlanetParentTypes.Planet)
-            {
-                break;
-            }
-
-            string parentBody = asset.planetDatas[curIndex].parentBody;
-
-            int idx = FindStarIndex(parentBody);
-            if (idx != -1)
-            {
-                curType = PlanetParentTypes.Star;
-                curIndex = idx;
-                continue;
-            }
-
-            idx = FindPlanetIndex(parentBody);
-            if (idx != -1)
-            {
-                curType = PlanetParentTypes.Planet;
-                curIndex = idx;
-                continue;
-            }
-
-            //見つからない場合はSearchParentと同じく星系の主星にフォールバック
-            curType = asset.starDatas.Count != 0 ? PlanetParentTypes.Star : PlanetParentTypes.Planet;
-            curIndex = 0;
-        }
-
-        return SearchParentName(curType, curIndex);
-    }
-
     /// <summary>
     /// lightSourceBodyName から lightSourceType(0:恒星 1:惑星) と lightSourceIndex を求める。見つからない天体は光源から除外する。
     /// </summary>
@@ -834,6 +814,20 @@ public class StarSystemImporter : MonoBehaviour
                 continue;
             }
 
+            //共通重心なら、中の恒星すべて(重い順)
+            idx = FindBaryIndex(bodyName);
+            if (idx != -1)
+            {
+                foreach (int starIdx in GetStarsInBary(idx))
+                {
+                    if (names.Contains(stars[starIdx].name)) { continue; } //すでに光源にある恒星は重ねない
+                    names.Add(stars[starIdx].name);
+                    types.Add((int)PlanetParentTypes.Star);
+                    indexes.Add(starIdx);
+                }
+                continue;
+            }
+
             Debug.LogWarning(pl.name + " の光源「" + bodyName + "」が見つからないため、光源から除外しました");
         }
 
@@ -846,7 +840,7 @@ public class StarSystemImporter : MonoBehaviour
     /// 光点・光芒のビルボード(prefab)を天体本体の子として作り、MeshRenderer を返す。prefab が未設定なら null。
     /// 本体と一緒に破棄・非表示になる。位置と大きさはシェーダー側で決めるので、ローカル座標は原点にする。
     /// </summary>
-    /// <param name="prefab">pointObj または glareObj</param>
+    /// <param name="prefab">pointObj または spikeObj</param>
     /// <param name="body">天体本体</param>
     /// <param name="suffix">オブジェクト名の末尾("_point" など)</param>
     private MeshRenderer CreateBillboard(GameObject prefab, GameObject body, string suffix)
@@ -861,6 +855,16 @@ public class StarSystemImporter : MonoBehaviour
         var mesh = obj.GetComponent<MeshRenderer>();
         if (mesh == null) { Debug.LogWarning("ビルボードのオブジェクトに MeshRenderer がありません: " + prefab.name); }
         return mesh;
+    }
+
+    /// <summary>
+    /// PSFを使わない天体の回折スパイクに、テクスチャを使わないバリアントのマテリアル(spikeMaterialNoPSF)を割り当てる。
+    /// PSFを使う天体はプレハブのマテリアル(UsePSF を ON にしたもの)のままにする。
+    /// </summary>
+    private void ApplySpikeMaterial(MeshRenderer spike, bool isUsePSF)
+    {
+        if (spike == null || isUsePSF || spikeMaterialNoPSF == null) { return; }
+        spike.sharedMaterial = spikeMaterialNoPSF;
     }
 
     /// <summary>
@@ -914,6 +918,375 @@ public class StarSystemImporter : MonoBehaviour
         }
 
         pl.occluderIndex = indexes.ToArray();
+    }
+
+    //---------------- 共通重心(連星) ----------------
+
+    /// <summary>
+    /// 共通重心(連星)を読み、中の天体A・Bに重心の周りの軌道を設定する。
+    /// 天体A・Bは元の parentBody と軌道要素を無視して重心を親にする。重心からの軌道長半径は質量比で分け(天体Aは負にして、重心をはさんで天体Bの反対側に置く)、
+    /// 離心率・近点引数は重心の設定を使い、公転周期は天体A・Bの質量の合計と相対軌道長半径からケプラーの第3法則で求める。
+    /// </summary>
+    private void ReadBaryCenters()
+    {
+        int count = asset.baryCenterDatas.Count;
+        barys = new BaryCenter[count];
+
+        //名前・天体A・B・親を解決し、軌道要素を換算する
+        for (int i = 0; i < count; i++)
+        {
+            var data = asset.baryCenterDatas[i];
+            var bary = new BaryCenter();
+            bary.name = data.name;
+            bary.index = i;
+
+            string[] memberNames = { data.bodyA, data.bodyB };
+            for (int k = 0; k < 2; k++)
+            {
+                PlanetParentTypes type;
+                int index;
+                if (FindBody(memberNames[k], out type, out index) && !(type == PlanetParentTypes.BaryCenter && index == i))
+                {
+                    bary.memberType[k] = type;
+                    bary.memberIndex[k] = index;
+                }
+                else
+                {
+                    Debug.LogWarning("共通重心「" + data.name + "」の天体「" + memberNames[k] + "」が見つからないため、無視しました");
+                }
+            }
+
+            //親: 別の共通重心に入っていればその重心、そうでなければ parentBody(空なら星系の原点)
+            int memberBary = FindBaryOfMember(data.name);
+            if (memberBary != -1 && memberBary != i)
+            {
+                bary.parentType = PlanetParentTypes.BaryCenter;
+                bary.parentIndex = memberBary;
+            }
+            else if (!string.IsNullOrEmpty(data.parentBody))
+            {
+                PlanetParentTypes type;
+                int index;
+                if (FindBody(data.parentBody, out type, out index) && !(type == PlanetParentTypes.BaryCenter && index == i))
+                {
+                    bary.parentType = type;
+                    bary.parentIndex = index;
+                }
+                else
+                {
+                    Debug.LogWarning("共通重心「" + data.name + "」の親天体「" + data.parentBody + "」が見つからないため、星系の原点に置きます");
+                }
+            }
+
+            //親の周りの軌道(別の共通重心に入っているときは、後で上書きする)
+            bary.semiMajorAxis = ToKm(data.parentSemiMajorAxis, data.parentSmaInputType) * scale;
+            bary.eccentricity = data.parentEccentricity;
+            bary.argOfPeri = data.parentArgOfPeri;
+            bary.orbitalPeriod = PeriodToSeconds(data.parentOrbitalPeriod, data.parentPeriodInputType);
+
+            //連星の軌道(天体Aと天体Bの相対軌道)
+            bary.binarySemiMajorAxis = ToKm(data.relativeSemiMajorAxis, data.smaInputType) * scale;
+            bary.binaryEccentricity = data.eccentricity;
+            bary.binaryArgOfPeri = data.argOfPeri;
+
+            barys[i] = bary;
+        }
+
+        //質量(天体A・Bの合計。共通重心の入れ子は再帰で合計する)
+        foreach (var bary in barys)
+        {
+            bary.mass = GetScaledMass(PlanetParentTypes.BaryCenter, bary.index, 0);
+        }
+
+        //天体A・Bに重心の周りの軌道を設定する
+        foreach (var bary in barys)
+        {
+            double massA = GetScaledMass(bary.memberType[0], bary.memberIndex[0], 0);
+            double massB = GetScaledMass(bary.memberType[1], bary.memberIndex[1], 0);
+            double total = massA + massB;
+            double a = bary.binarySemiMajorAxis;
+
+            bary.binaryPeriod = CalcKeplerPeriod(a, total, bary.name);
+
+            //重心からの軌道長半径。天体Aは負にして、重心をはさんで天体Bの反対側に置く
+            double smaA = total > 0 ? -a * massB / total : 0;
+            double smaB = total > 0 ? a * massA / total : 0;
+            SetMemberOrbit(bary, 0, smaA);
+            SetMemberOrbit(bary, 1, smaB);
+        }
+
+        //親の周りの公転周期が0なら、親と重心の質量から求める(別の共通重心に入っている重心は設定済み)
+        foreach (var bary in barys)
+        {
+            if (bary.parentIndex < 0 || bary.orbitalPeriod > 0 || FindBaryOfMember(bary.name) != -1) { continue; }
+            double parentMass = GetScaledMass(bary.parentType, bary.parentIndex, 0);
+            bary.orbitalPeriod = CalcKeplerPeriod(bary.semiMajorAxis, parentMass + bary.mass, bary.name);
+        }
+
+        //光源とみなす恒星(中の最も重い恒星。恒星がなければ親をたどった先の恒星)
+        foreach (var bary in barys)
+        {
+            bary.rootStar = FindRootStar(PlanetParentTypes.BaryCenter, bary.index, 0);
+        }
+    }
+
+    //共通重心の天体A(k=0)・天体B(k=1)に、重心の周りの軌道を設定する
+    private void SetMemberOrbit(BaryCenter bary, int k, double semiMajorAxis)
+    {
+        int idx = bary.memberIndex[k];
+        if (idx < 0) { return; }
+
+        switch (bary.memberType[k])
+        {
+            case PlanetParentTypes.Star:
+                var star = stars[idx];
+                star.parentType = PlanetParentTypes.BaryCenter;
+                star.parentIndex = bary.index;
+                star.semiMajorAxis = semiMajorAxis;
+                star.eccentricity = bary.binaryEccentricity;
+                star.argOfPeri = bary.binaryArgOfPeri;
+                star.orbitalPeriod = bary.binaryPeriod;
+                break;
+
+            case PlanetParentTypes.Planet:
+                var planet = planets[idx];
+                planet.parentType = PlanetParentTypes.BaryCenter;
+                planet.parentIndex = bary.index;
+                planet.semiMajorAxis = semiMajorAxis;
+                planet.eccentricity = bary.binaryEccentricity;
+                planet.argOfPeri = bary.binaryArgOfPeri;
+                planet.orbitalPeriod = bary.binaryPeriod;
+                break;
+
+            case PlanetParentTypes.BaryCenter:
+                var inner = barys[idx];
+                inner.parentType = PlanetParentTypes.BaryCenter;
+                inner.parentIndex = bary.index;
+                inner.semiMajorAxis = semiMajorAxis;
+                inner.eccentricity = bary.binaryEccentricity;
+                inner.argOfPeri = bary.binaryArgOfPeri;
+                inner.orbitalPeriod = bary.binaryPeriod;
+                break;
+        }
+    }
+
+    //軌道長半径を入力タイプに応じてkmに換算する(スケーリング前)
+    private double ToKm(double value, SMAType type)
+    {
+        return type == SMAType.au ? value * AU : value;
+    }
+
+    //天体のスケーリング後の質量(kg)。共通重心は中の天体の合計。見つからなければ0
+    private double GetScaledMass(PlanetParentTypes type, int index, int depth)
+    {
+        if (index < 0) { return 0; }
+        switch (type)
+        {
+            case PlanetParentTypes.Star:
+                return index < stars.Length ? stars[index].mass : 0;
+            case PlanetParentTypes.Planet:
+                return index < planets.Length ? planets[index].mass : 0;
+            case PlanetParentTypes.BaryCenter:
+                //循環参照で無限に再帰しないよう、重心の数で打ち切る
+                if (barys == null || index >= barys.Length || depth > barys.Length) { return 0; }
+                var bary = barys[index];
+                return GetScaledMass(bary.memberType[0], bary.memberIndex[0], depth + 1)
+                     + GetScaledMass(bary.memberType[1], bary.memberIndex[1], depth + 1);
+        }
+        return 0;
+    }
+
+    //天体名が天体A・Bとして入っている共通重心の番号。入っていなければ -1
+    private int FindBaryOfMember(string bodyName)
+    {
+        if (string.IsNullOrEmpty(bodyName)) { return -1; }
+        for (int i = 0; i < asset.baryCenterDatas.Count; i++)
+        {
+            var data = asset.baryCenterDatas[i];
+            if (data.bodyA == bodyName || data.bodyB == bodyName) { return i; }
+        }
+        return -1;
+    }
+
+    //共通重心の名前から番号を返す。見つからなければ -1
+    private int FindBaryIndex(string name)
+    {
+        if (string.IsNullOrEmpty(name)) { return -1; }
+        for (int i = 0; i < asset.baryCenterDatas.Count; i++)
+        {
+            if (asset.baryCenterDatas[i].name == name) { return i; }
+        }
+        return -1;
+    }
+
+    //天体名から、タイプ(恒星・惑星・共通重心)と番号を求める。見つからなければ false
+    private bool FindBody(string name, out PlanetParentTypes type, out int index)
+    {
+        type = PlanetParentTypes.Star;
+        index = -1;
+        if (string.IsNullOrEmpty(name)) { return false; }
+
+        for (int i = 0; i < asset.starDatas.Count; i++)
+        {
+            if (asset.starDatas[i].name == name) { type = PlanetParentTypes.Star; index = i; return true; }
+        }
+        for (int i = 0; i < asset.planetDatas.Count; i++)
+        {
+            if (asset.planetDatas[i].name == name) { type = PlanetParentTypes.Planet; index = i; return true; }
+        }
+        index = FindBaryIndex(name);
+        if (index != -1) { type = PlanetParentTypes.BaryCenter; return true; }
+        return false;
+    }
+
+    //共通重心の中の恒星(入れ子の重心も含む)を、重い順に返す
+    private List<int> GetStarsInBary(int baryIndex)
+    {
+        var result = new List<int>();
+        CollectStarsInBary(baryIndex, result, 0);
+        result.Sort((x, y) => stars[y].mass.CompareTo(stars[x].mass));
+        return result;
+    }
+
+    private void CollectStarsInBary(int baryIndex, List<int> result, int depth)
+    {
+        if (barys == null || baryIndex < 0 || baryIndex >= barys.Length || depth > barys.Length) { return; }
+        var bary = barys[baryIndex];
+        for (int k = 0; k < 2; k++)
+        {
+            int idx = bary.memberIndex[k];
+            if (idx < 0) { continue; }
+            if (bary.memberType[k] == PlanetParentTypes.Star && !result.Contains(idx)) { result.Add(idx); }
+            else if (bary.memberType[k] == PlanetParentTypes.BaryCenter) { CollectStarsInBary(idx, result, depth + 1); }
+        }
+    }
+
+    //光源とみなす恒星を親をたどって求める。共通重心は中の最も重い恒星(なければさらに親をたどる)。見つからなければ -1
+    private int FindRootStar(PlanetParentTypes type, int index, int depth)
+    {
+        if (index < 0 || depth > stars.Length + planets.Length + barys.Length) { return -1; }
+        switch (type)
+        {
+            case PlanetParentTypes.Star:
+                return index;
+            case PlanetParentTypes.Planet:
+                return FindRootStar(planets[index].parentType, planets[index].parentIndex, depth + 1);
+            case PlanetParentTypes.BaryCenter:
+                var inner = GetStarsInBary(index);
+                if (inner.Count > 0) { return inner[0]; }
+                return FindRootStar(barys[index].parentType, barys[index].parentIndex, depth + 1);
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// lightReferenceBodys が未設定の惑星の光源を、親をたどって決める。
+    /// 恒星に着いたらその恒星、共通重心に着いたら中の恒星すべて(重い順)を光源にする。途中の惑星(衛星から見た主星など)も、上の階層から順に光源に加える。
+    /// </summary>
+    private string[] ResolveDefaultLightSources(Planet pl)
+    {
+        var starNames = new List<string>();
+        var planetNames = new List<string>(); //上の階層が先
+        PlanetParentTypes type = pl.parentType;
+        int index = pl.parentIndex;
+
+        //循環参照で無限ループしないよう、天体の数で打ち切る
+        int limit = stars.Length + planets.Length + barys.Length + 1;
+        for (int n = 0; n < limit && index >= 0; n++)
+        {
+            if (type == PlanetParentTypes.Star)
+            {
+                if (index < stars.Length) { starNames.Add(stars[index].name); }
+                break;
+            }
+
+            if (type == PlanetParentTypes.Planet)
+            {
+                if (index >= planets.Length) { break; }
+                planetNames.Insert(0, planets[index].name);
+                type = planets[index].parentType;
+                index = planets[index].parentIndex;
+                continue;
+            }
+
+            if (type == PlanetParentTypes.BaryCenter)
+            {
+                if (index >= barys.Length) { break; }
+                var inner = GetStarsInBary(index);
+                if (inner.Count > 0)
+                {
+                    foreach (int starIdx in inner) { starNames.Add(stars[starIdx].name); }
+                    break;
+                }
+                //恒星のない重心(二重惑星など)は、さらに親をたどる
+                type = barys[index].parentType;
+                index = barys[index].parentIndex;
+                continue;
+            }
+
+            break;
+        }
+
+        starNames.AddRange(planetNames);
+        return starNames.ToArray();
+    }
+
+    /// <summary>
+    /// 公転の計算順(親が先)を作り、Manager の orbitOrderType / orbitOrderIndex に入れる。
+    /// 恒星・惑星・共通重心を、親をたどって深さ優先で並べる。親子関係が循環していれば警告する。
+    /// </summary>
+    private void BuildOrbitOrder()
+    {
+        var stateStar = new int[stars.Length]; //0:未訪問 1:訪問中 2:済み
+        var statePlanet = new int[planets.Length];
+        var stateBary = new int[barys.Length];
+        var types = new List<int>();
+        var indexes = new List<int>();
+
+        for (int i = 0; i < barys.Length; i++) { VisitOrbit(PlanetParentTypes.BaryCenter, i, stateStar, statePlanet, stateBary, types, indexes); }
+        for (int i = 0; i < stars.Length; i++) { VisitOrbit(PlanetParentTypes.Star, i, stateStar, statePlanet, stateBary, types, indexes); }
+        for (int i = 0; i < planets.Length; i++) { VisitOrbit(PlanetParentTypes.Planet, i, stateStar, statePlanet, stateBary, types, indexes); }
+
+        manager.orbitOrderType = types.ToArray();
+        manager.orbitOrderIndex = indexes.ToArray();
+    }
+
+    private void VisitOrbit(PlanetParentTypes type, int index, int[] stateStar, int[] statePlanet, int[] stateBary, List<int> types, List<int> indexes)
+    {
+        int[] state = null;
+        PlanetParentTypes parentType = PlanetParentTypes.Star;
+        int parentIndex = -1;
+        string bodyName = "";
+
+        switch (type)
+        {
+            case PlanetParentTypes.Star:
+                state = stateStar;
+                if (index >= 0 && index < stars.Length) { parentType = stars[index].parentType; parentIndex = stars[index].parentIndex; bodyName = stars[index].name; }
+                break;
+            case PlanetParentTypes.Planet:
+                state = statePlanet;
+                if (index >= 0 && index < planets.Length) { parentType = planets[index].parentType; parentIndex = planets[index].parentIndex; bodyName = planets[index].name; }
+                break;
+            case PlanetParentTypes.BaryCenter:
+                state = stateBary;
+                if (index >= 0 && index < barys.Length) { parentType = barys[index].parentType; parentIndex = barys[index].parentIndex; bodyName = barys[index].name; }
+                break;
+        }
+
+        if (state == null || index < 0 || index >= state.Length || state[index] == 2) { return; }
+        if (state[index] == 1)
+        {
+            Debug.LogWarning("公転の親子関係が循環しています: " + bodyName);
+            return;
+        }
+
+        state[index] = 1;
+        VisitOrbit(parentType, parentIndex, stateStar, statePlanet, stateBary, types, indexes); //親を先に並べる
+        state[index] = 2;
+
+        types.Add((int)type);
+        indexes.Add(index);
     }
 
 #endif

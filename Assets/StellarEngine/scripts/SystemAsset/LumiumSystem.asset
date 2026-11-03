@@ -1,0 +1,210 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25a58ae1e3c3e514aad04d8662f20307, type: 3}
+  m_Name: LumiumSystem
+  m_EditorClassIdentifier: 
+  starDatas:
+  - name: Lumium
+    nameJP: "\u30EB\u30DF\u30A2\u30E0"
+    specClass: A3V
+    mass: 1.95
+    rad: 1287749
+    teff: 8700
+    lum: 17.6
+    isUseSolarUnit: 0
+  planetDatas:
+  - name: Arkia
+    nameJP: 
+    tex: {fileID: 2800000, guid: 7736526e289e59b499197b1cdb963fb0, type: 3}
+    texMeanColor: {r: 1, g: 1, b: 1, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: Lumium
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
+    semiMajorAxis: 5
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.3
+    rad: 1.05
+    albedoGeom: 0.3199999928474426
+    albedoBond: 0.3100000023841858
+    rotationPeriodInputType: 0
+    rotationPeriod: 26
+    isTidalLock: 0
+    obliquity: 0
+    hapke: 0.20499999821186066
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Mono
+    nameJP: 
+    tex: {fileID: 2800000, guid: a0a6cc63c9df6f046a71797343799ee9, type: 3}
+    texMeanColor: {r: 0.9245283, g: 0.8458962, b: 0.33434182, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Arkia
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
+    semiMajorAxis: 36056
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.3
+    rad: 318
+    albedoGeom: 0.20499999821186066
+    albedoBond: 0.210999995470047
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.20499999821186066
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Nalu
+    nameJP: 
+    tex: {fileID: 2800000, guid: d7a1b69fc1fff98449c9cd3416086da1, type: 3}
+    texMeanColor: {r: 0.38269836, g: 0.67618626, b: 0.9433962, a: 0}
+    smaInputType: 1
+    mrInputType: 0
+    isUseLight: 1
+    parentBody: Arkia
+    lightReferenceBodys: []
+    isUseOcclusion: 1
+    occluderBodys: []
+    semiMajorAxis: 80020
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.3
+    rad: 884
+    albedoGeom: 0.20499999821186066
+    albedoBond: 0.210999995470047
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.20499999821186066
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Ebolg
+    nameJP: 
+    tex: {fileID: 2800000, guid: d7a1b69fc1fff98449c9cd3416086da1, type: 3}
+    texMeanColor: {r: 0.38269836, g: 0.67618626, b: 0.9433962, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 0
+    occluderBodys: []
+    semiMajorAxis: 4.5
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 1.6
+    rad: 1.15
+    albedoGeom: 0.30399999022483826
+    albedoBond: 0.2930000126361847
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.20499999821186066
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  - name: Twain
+    nameJP: 
+    tex: {fileID: 2800000, guid: 7219f707656bdee47ac026e9e50b35c9, type: 3}
+    texMeanColor: {r: 0.7528214, g: 0.37254906, b: 1, a: 0}
+    smaInputType: 0
+    mrInputType: 3
+    isUseLight: 1
+    parentBody: 
+    lightReferenceBodys: []
+    isUseOcclusion: 0
+    occluderBodys: []
+    semiMajorAxis: 3.4
+    eccentricity: 0
+    inclination: 0
+    argOfPeri: 0
+    periodInputType: 0
+    orbitalPeriod: 0
+    mass: 34.9
+    rad: 5.5
+    albedoGeom: 0.8610000014305115
+    albedoBond: 0.8309999704360962
+    rotationPeriodInputType: 0
+    rotationPeriod: 0
+    isTidalLock: 1
+    obliquity: 0
+    hapke: 0.15600000321865082
+    atmPreset: 0
+    atmPressure: 0
+    atmHeight: 0
+    atmBrightness: 0
+    atmAdv:
+      forward: 0
+      opacity: 0
+      reyleigh: 0
+      reyleighR: 0
+      reyleighG: 0
+      reyleighB: 0
+  testFloat: 0

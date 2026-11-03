@@ -88,13 +88,23 @@ Material:
     - _brightness: 1
     - _brightness2: 1
     - _customDepth: 0.0001
-    - _customDepthMul: 1
+    - _customDepthMul: 0
     - _flux: 1
     - _hapke: 1
     - _hapkeFrac: 0
     - _intensity: 40.64659
+    - _lightCount: 1
+    - _lightIntensity0: 1
+    - _lightIntensity1: 0
+    - _lightIntensity2: 0
+    - _lightIntensity3: 0
     - _lightType: 0
     - _oppFrac: 1
+    - _orderedDepth: 0
+    - _orderedDepthAtm: 0
+    - _orderedDepthEye: 1
+    - _orderedDepthMul: 0
+    - _orderedDepthMulAtm: 0
     - _reyleighB: 6
     - _reyleighG: 2
     - _reyleighR: 0.58
@@ -105,6 +115,14 @@ Material:
     - _atmColor: {r: 1, g: 1, b: 1, a: 1}
     - _emissive: {r: 1, g: 0.98090714, b: 0.9437786, a: 1}
     - _lightColor: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor0: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor1: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor2: {r: 1, g: 1, b: 1, a: 1}
+    - _lightColor3: {r: 1, g: 1, b: 1, a: 1}
     - _lightVector: {r: 1, g: 0, b: 0, a: 0}
+    - _lightVector0: {r: 1, g: 0, b: 0, a: 0}
+    - _lightVector1: {r: 0, g: 0, b: 0, a: 0}
+    - _lightVector2: {r: 0, g: 0, b: 0, a: 0}
+    - _lightVector3: {r: 0, g: 0, b: 0, a: 0}
     - _localAmbientLight: {r: 0, g: 0, b: 0, a: 0}
   m_BuildTextureStacks: []
