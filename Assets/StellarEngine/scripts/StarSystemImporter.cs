@@ -17,7 +17,8 @@ public class StarSystemImporter : MonoBehaviour
     [Tooltip("恒星モデル")][SerializeField] private GameObject starBaseObj;
     [SerializeField, Tooltip("ライトベース")] private Light lightBaseObj;
     [Tooltip("天体モデル")][SerializeField] private GameObject celestialBodyBaseObj;
-    [Tooltip("光点のオブジェクト")][SerializeField] private GameObject pointObj;
+    [Tooltip("光点・回折スパイクのオブジェクト")][SerializeField] private GameObject pointObj;
+    [Tooltip("光芒のオブジェクト")][SerializeField] private GameObject glareObj;
     [Tooltip("惑星のデフォルトテクスチャ")][SerializeField] private Texture2D celestialDefaultTex;
     [Tooltip("スケール")] [SerializeField]private double scale;
     [Tooltip("星をUnity上でどれくらいの距離に置くか")][SerializeField] private double distUnity;
@@ -401,6 +402,7 @@ public class StarSystemImporter : MonoBehaviour
         manager.body_star = new GameObject[stars.Length];
         manager.mesh_star = new MeshRenderer[stars.Length];
         manager.point_star = new MeshRenderer[stars.Length];
+        manager.glare_star = new MeshRenderer[stars.Length];
 
 
         manager.specClass = new string[stars.Length];
@@ -430,7 +432,8 @@ public class StarSystemImporter : MonoBehaviour
             manager.body_star[i] = star.body;
             manager.body_star[i].transform.SetParent(manager.cSphere.transform);
             manager.mesh_star[i] = manager.body_star[i].GetComponent<MeshRenderer>();
-            manager.point_star[i] = CreatePoint(manager.body_star[i]);
+            manager.point_star[i] = CreateBillboard(pointObj, manager.body_star[i], "_point");
+            manager.glare_star[i] = CreateBillboard(glareObj, manager.body_star[i], "_glare");
 
             manager.specClass[i] = star.specClass;
             manager.mass_star[i] = star.mass;
@@ -454,6 +457,7 @@ public class StarSystemImporter : MonoBehaviour
         manager.mesh_planet = new MeshRenderer[planets.Length];
         manager.mesh_planet_block = new MaterialPropertyBlock[planets.Length];
         manager.point_planet = new MeshRenderer[planets.Length];
+        manager.glare_planet = new MeshRenderer[planets.Length];
 
         manager.lightObj_planet = new Light[planets.Length];
         manager.lightBaseColor_planet = new Color[planets.Length];
@@ -525,7 +529,8 @@ public class StarSystemImporter : MonoBehaviour
 
             manager.mesh_planet[i] = manager.body_planet[i].GetComponent<MeshRenderer>();
             manager.mesh_planet_block[i] = new MaterialPropertyBlock();
-            manager.point_planet[i] = CreatePoint(manager.body_planet[i]);
+            manager.point_planet[i] = CreateBillboard(pointObj, manager.body_planet[i], "_point");
+            manager.glare_planet[i] = CreateBillboard(glareObj, manager.body_planet[i], "_glare");
 
             manager.tex_planet[i] = planet.texture;
 
@@ -838,21 +843,23 @@ public class StarSystemImporter : MonoBehaviour
     }
 
     /// <summary>
-    /// 光点(pointObj)を天体本体の子として作り、MeshRenderer を返す。pointObj が未設定なら null。
+    /// 光点・光芒のビルボード(prefab)を天体本体の子として作り、MeshRenderer を返す。prefab が未設定なら null。
     /// 本体と一緒に破棄・非表示になる。位置と大きさはシェーダー側で決めるので、ローカル座標は原点にする。
     /// </summary>
+    /// <param name="prefab">pointObj または glareObj</param>
     /// <param name="body">天体本体</param>
-    private MeshRenderer CreatePoint(GameObject body)
+    /// <param name="suffix">オブジェクト名の末尾("_point" など)</param>
+    private MeshRenderer CreateBillboard(GameObject prefab, GameObject body, string suffix)
     {
-        if (pointObj == null) { return null; }
+        if (prefab == null) { return null; }
 
-        var point = Instantiate(pointObj, body.transform, false);
-        point.name = body.name + "_point";
-        point.transform.localPosition = Vector3.zero;
-        point.transform.localRotation = Quaternion.identity;
+        var obj = Instantiate(prefab, body.transform, false);
+        obj.name = body.name + suffix;
+        obj.transform.localPosition = Vector3.zero;
+        obj.transform.localRotation = Quaternion.identity;
 
-        var mesh = point.GetComponent<MeshRenderer>();
-        if (mesh == null) { Debug.LogWarning("光点のオブジェクトに MeshRenderer がありません: " + pointObj.name); }
+        var mesh = obj.GetComponent<MeshRenderer>();
+        if (mesh == null) { Debug.LogWarning("ビルボードのオブジェクトに MeshRenderer がありません: " + prefab.name); }
         return mesh;
     }
 

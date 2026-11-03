@@ -19,6 +19,8 @@ public class StarSystemManager : UdonSharpBehaviour
     private const float BASEDEPTH = 0.00001f; //最遠天体の深度値(深度は1が最近傍、0が最遠)
     private const float BASEDEPTH_INC = 0.0000015f; //描画順が1つ近くなるごとに足す深度値
     private const float MIN_DIAMETER_DEG = 1e-9f; //CalcExposurenessで0除算を避けるための視直径(度)の下限
+    private const float PHOTOCENTER_COEF = 0.4244132f; //4/(3π)。位相角αのとき、照らされた部分の重心は中心から 角半径 × この値 × (1 - cosα) だけ光源側にある
+    private const float SUN_DIAMETER_ARCMIN = 31.97f; //1AUから見た太陽の視直径(分角)。表面輝度の等級の基準
     private const float ATM_DEPTH_RATIO = 0.5f; //大気パスの表側を本体より手前、裏側を奥にずらす量(BASEDEPTH_INC に対する割合。1未満にして隣の天体との間に収める)
     public const int MAX_LIGHT_SOURCE = 4; //惑星シェーダーに渡せる光源の最大数(シェーダー側のスロット数と揃える)
     private const int KEPLER_ITERATION = 20; //ケプラー方程式の反復回数の上限
@@ -44,9 +46,31 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField, Range(0.5f, 32f), Tooltip("最も暗い光点の半径(画面ピクセル)")] private float pointSizeMin = 3f;
     [SerializeField, Range(0.5f, 64f), Tooltip("最も明るい光点の半径(画面ピクセル)")] private float pointSizeMax = 12f;
     [SerializeField, Range(0f, 10f), Tooltip("光点の明るさの倍率")] private float pointBrightness = 1f;
-    [SerializeField, Range(1.1f, 10f), Tooltip("光点が消える視直径 (meshCullDiameterに対する倍率)。この間でメッシュと重ねて切り替える")] private float pointFadeRatio = 3f;
-    [SerializeField, Tooltip("回折スパイクが出始める等級")] private float pointSpikeMagn = 0f;
-    [SerializeField, Range(0f, 4f), Tooltip("回折スパイクの最大の強さ")] private float pointSpikeStrength = 1f;
+    [SerializeField, Range(1.1f, 10f), Tooltip("光点が消える視直径 (meshCullDiameterに対する倍率)。この間でメッシュと重ねて切り替える。光芒はここから出始める")] private float pointFadeRatio = 3f;
+    [SerializeField, Tooltip("BrightPoint(光点の明るい点の装飾)が出始める等級")] private float brightPointMagn = 0f;
+    [SerializeField, Range(0f, 4f), Tooltip("BrightPointの最大の強さ")] private float brightPointStrength = 1f;
+
+    [Header("回折スパイク (表面輝度が非常に高い天体)")]
+    [SerializeField, Tooltip("表面輝度が非常に高い天体に回折スパイクを描く(光点の表示とは関係なく出る)")] private bool isUseSpike = true;
+    [SerializeField, Range(0.01f, 60f), Tooltip("分解能(分角)。これより小さい天体は、光がこの大きさの円盤に広がったとみなして表面輝度を求める")] private float resolvingPower = 1f;
+    [SerializeField, Tooltip("回折スパイクが出始める表面輝度の等級 (太陽と同じ視直径だったときの等級。太陽は約-26.7)")] private float spikeMagnThreshold = -20f;
+    [SerializeField, Range(0.1f, 20f), Tooltip("出始めから最大の明るさになるまでの等級の幅")] private float spikeFadeMagn = 3f;
+    [SerializeField, Range(0f, 10f), Tooltip("回折スパイクの明るさの倍率")] private float spikeBrightness = 1f;
+    [SerializeField, Range(1, 16), Tooltip("光条の本数")] private int spikeCount = 4;
+    [SerializeField, Range(0f, 360f), Tooltip("光条の回転角(度)")] private float spikeAngle = 0f;
+    [SerializeField, Range(0f, 200f), Tooltip("出始めの表面輝度から1等明るくなるごとに伸ばす長さ(画面ピクセル)")] private float spikeLengthPerMagn = 30f;
+    [SerializeField, Range(1f, 2000f), Tooltip("光条の長さの上限(画面ピクセル)")] private float spikeLengthMax = 300f;
+    [SerializeField, Range(0f, 1f), Tooltip("光条の太さ (視直径のピクセル数に対する割合)")] private float spikeWidthRatio = 0.05f;
+    [SerializeField, Range(0.1f, 16f), Tooltip("光条の太さの下限(画面ピクセル)")] private float spikeWidthMin = 1f;
+
+    [Header("光芒 (視直径の大きい天体)")]
+    [SerializeField, Tooltip("視直径の大きい天体に光芒を描く(光点が消えた視直径から出始める)")] private bool isUseGlare = true;
+    [SerializeField, Range(1.1f, 10f), Tooltip("光芒が最大になる視直径 (光点が消える視直径 meshCullDiameter × pointFadeRatio に対する倍率)。この間でフェードインする")] private float glareFadeRatio = 2f;
+    [SerializeField, Range(0f, 10f), Tooltip("光芒の明るさの倍率")] private float glareBrightness = 1f;
+    [SerializeField, Range(0f, 20f), Tooltip("最も明るいときの光芒の広がり (天体の半径に対する倍率。外縁 = 半径 × (1 + この値))")] private float glareSizeScale = 4f;
+    [SerializeField, Tooltip("光芒が出始める表面輝度の等級 (太陽と同じ視直径だったときの等級)")] private float glareMagnDim = -10f;
+    [SerializeField, Tooltip("光芒が最大になる表面輝度の等級 (太陽は約-26.7)")] private float glareMagnBright = -26.7f;
+    [SerializeField, Range(0.5f, 30f), Tooltip("全体輝度による光芒の抑制幅(等級): 地上の全光量よりこの等級だけ暗い天体は光芒が0になる (pointDaylightRangeより小さいほど光点より強く効く)")] private float glareDaylightRange = 10f;
 
     [Header("処理時間の計測")]
     [SerializeField, Tooltip("FixedUpdate内の各処理の時間を計測してログに出す")] private bool debug_isProfile;
@@ -213,7 +237,8 @@ public class StarSystemManager : UdonSharpBehaviour
     public string[] name_star;
     [HideInInspector] public GameObject[] body_star;
     [HideInInspector] public MeshRenderer[] mesh_star;
-    [HideInInspector] public MeshRenderer[] point_star; //光点(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] point_star; //光点・回折スパイク(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] glare_star; //光芒(本体の子)。Importerが設定
     [Header("物理特性")]
     [HideInInspector] public string[] specClass;
     [HideInInspector] public double[] mass_star; //kg
@@ -249,7 +274,9 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public Texture2D[] tex_planet;
     [HideInInspector] public MaterialPropertyBlock[] mesh_planet_block;
     [HideInInspector] public MeshRenderer[] point_planet; //光点(本体の子)。Importerが設定
+    [HideInInspector] public MeshRenderer[] glare_planet; //光芒(本体の子)。Importerが設定
     private MaterialPropertyBlock[] pointBlock_planet, pointBlock_star;
+    private MaterialPropertyBlock[] glareBlock_planet, glareBlock_star;
 
     //描画順(RenderQueueはMaterialPropertyBlockで変えられないため、実行時に天体ごとのマテリアルを複製して持つ)
     private Material[] mat_planet, mat_star;
@@ -1140,12 +1167,18 @@ public class StarSystemManager : UdonSharpBehaviour
 
             appMagn_planet[i] = CalcVisMagnitude(flux_planet_obs[i]);
 
-            //光点(大気減光後の明るさで描く)
-            if (point_planet != null && i < point_planet.Length)
+            //光点・回折スパイク・光芒(大気減光後の明るさで描く)
             {
                 Color pointCol = lightBaseColor_planet[i] * GetReyleighColor((float)airmass, 0.35f);
-                UpdatePoint(point_planet[i], pointBlock_planet[i], (float)appDiameter_planet[i],
-                    CalcVisMagnitude(flux_planet_obs_surface[i]), pointCol);
+                //位相角による中心のずらし: 光源の向き(Unity座標)と、光度中心のずれ(角半径に対する割合)
+                Vector3 toLight = position_star[rootStar] - position_planet[i];
+                Vector3 toLightUnity = (view_surfaceQUnity * new Vector3(toLight.x, toLight.z, toLight.y)).normalized;
+                float cosPhase = Vector3.Dot(stp, otp); //位相角(恒星-惑星-観測者)のcos。1で満ちている
+                Vector4 phaseDir = new Vector4(toLightUnity.x, toLightUnity.y, toLightUnity.z, PHOTOCENTER_COEF * (1f - cosPhase));
+
+                UpdatePoint(GetRenderer(point_planet, i), GetBlock(pointBlock_planet, i),
+                    GetRenderer(glare_planet, i), GetBlock(glareBlock_planet, i),
+                    (float)appDiameter_planet[i], CalcVisMagnitude(flux_planet_obs_surface[i]), pointCol, phaseDir);
             }
 
             //Debug.Log(i + " " + body_planet[i].name + ", flux:" + flux * phase);
@@ -1324,13 +1357,13 @@ public class StarSystemManager : UdonSharpBehaviour
 
             L_exposureness[i] = exposureness;
 
-            //光点(大気減光後の明るさで描く)
-            if (point_star != null && i < point_star.Length)
+            //光点・回折スパイク・光芒(大気減光後の明るさで描く。恒星は自ら光るので中心はずらさない)
             {
                 Color pointCol = TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[i], 1.0f)
                     * GetReyleighColor((float)airmass, 0.35f);
-                UpdatePoint(point_star[i], pointBlock_star[i], starDiameterDeg,
-                    CalcVisMagnitude(obsFlux_star_surface[i]), pointCol);
+                UpdatePoint(GetRenderer(point_star, i), GetBlock(pointBlock_star, i),
+                    GetRenderer(glare_star, i), GetBlock(glareBlock_star, i),
+                    starDiameterDeg, CalcVisMagnitude(obsFlux_star_surface[i]), pointCol, Vector4.zero);
             }
 
 
@@ -1426,11 +1459,9 @@ public class StarSystemManager : UdonSharpBehaviour
                     renderQueue_planet[a] = queue;
                     depthRank_planet[a] = farther;
                     SetOrderedDepth(mesh_planet[a], renderBlock_planet[a], farther);
-                    //光点も本体と同じ深度にして、手前の天体に隠れるようにする
-                    if (point_planet != null && pointBlock_planet != null && a < point_planet.Length && point_planet[a] != null)
-                    {
-                        SetOrderedDepth(point_planet[a], pointBlock_planet[a], farther);
-                    }
+                    //光点・光芒も本体と同じ深度にして、手前の天体に隠れるようにする
+                    SetOrderedDepthIfExists(GetRenderer(point_planet, a), GetBlock(pointBlock_planet, a), farther);
+                    SetOrderedDepthIfExists(GetRenderer(glare_planet, a), GetBlock(glareBlock_planet, a), farther);
                 }
             }
             else
@@ -1442,10 +1473,8 @@ public class StarSystemManager : UdonSharpBehaviour
                     renderQueue_star[s] = queue;
                     depthRank_star[s] = farther;
                     SetOrderedDepth(mesh_star[s], renderBlock_star[s], farther);
-                    if (point_star != null && pointBlock_star != null && s < point_star.Length && point_star[s] != null)
-                    {
-                        SetOrderedDepth(point_star[s], pointBlock_star[s], farther);
-                    }
+                    SetOrderedDepthIfExists(GetRenderer(point_star, s), GetBlock(pointBlock_star, s), farther);
+                    SetOrderedDepthIfExists(GetRenderer(glare_star, s), GetBlock(glareBlock_star, s), farther);
                 }
             }
         }
@@ -1480,60 +1509,156 @@ public class StarSystemManager : UdonSharpBehaviour
     }
 
     /// <summary>
-    /// 光点の MaterialPropertyBlock を、光点の数に合わせて確保する(エディタ上の OnValidate からも呼ばれるため、必要なときに作る)。
+    /// 光点・光芒の MaterialPropertyBlock を、それぞれの数に合わせて確保する(エディタ上の OnValidate からも呼ばれるため、必要なときに作る)。
     /// </summary>
     private void EnsurePointBlocks()
     {
-        if (point_planet != null && (pointBlock_planet == null || pointBlock_planet.Length != point_planet.Length))
-        {
-            pointBlock_planet = new MaterialPropertyBlock[point_planet.Length];
-            for (int i = 0; i < pointBlock_planet.Length; i++) { pointBlock_planet[i] = new MaterialPropertyBlock(); }
-        }
-        if (point_star != null && (pointBlock_star == null || pointBlock_star.Length != point_star.Length))
-        {
-            pointBlock_star = new MaterialPropertyBlock[point_star.Length];
-            for (int i = 0; i < pointBlock_star.Length; i++) { pointBlock_star[i] = new MaterialPropertyBlock(); }
-        }
+        pointBlock_planet = EnsureBlocks(pointBlock_planet, point_planet);
+        pointBlock_star = EnsureBlocks(pointBlock_star, point_star);
+        glareBlock_planet = EnsureBlocks(glareBlock_planet, glare_planet);
+        glareBlock_star = EnsureBlocks(glareBlock_star, glare_star);
+    }
+
+    //renderers と同じ長さの MaterialPropertyBlock 配列を返す(長さが合っていればそのまま)
+    private MaterialPropertyBlock[] EnsureBlocks(MaterialPropertyBlock[] blocks, MeshRenderer[] renderers)
+    {
+        if (renderers == null) { return blocks; }
+        if (blocks != null && blocks.Length == renderers.Length) { return blocks; }
+
+        blocks = new MaterialPropertyBlock[renderers.Length];
+        for (int i = 0; i < blocks.Length; i++) { blocks[i] = new MaterialPropertyBlock(); }
+        return blocks;
+    }
+
+    //光点・光芒など、Importer で未設定のことがある Renderer に描画順の深度を渡す
+    private void SetOrderedDepthIfExists(MeshRenderer mesh, MaterialPropertyBlock block, int rank)
+    {
+        if (mesh == null || block == null) { return; }
+        SetOrderedDepth(mesh, block, rank);
+    }
+
+    //配列が未設定・範囲外なら null を返す(光点・光芒は Importer で未設定のことがある)
+    private MeshRenderer GetRenderer(MeshRenderer[] renderers, int i)
+    {
+        return (renderers != null && i < renderers.Length) ? renderers[i] : null;
+    }
+
+    private MaterialPropertyBlock GetBlock(MaterialPropertyBlock[] blocks, int i)
+    {
+        return (blocks != null && i < blocks.Length) ? blocks[i] : null;
     }
 
     /// <summary>
-    /// 光点(視直径の小さい天体に重ねるビルボード)の色・明るさ・大きさを設定する。
-    /// 視直径が meshCullDiameter 以下では最大、meshCullDiameter × pointFadeRatio で0になり、その間はメッシュと重ねて切り替える。
-    /// 大きさと明るさは等級に合わせて、限界等級(昼間は地上の全光量から下げる)で0、pointMagnBright で最大にする。
+    /// 光点・回折スパイク(point)と光芒(glare)の色・明るさ・大きさを設定する。
+    /// 光点：大きさと明るさは等級に合わせて、限界等級(昼間は地上の全光量から下げる)で0、pointMagnBright で最大にする。
+    ///       視直径が meshCullDiameter 以下では最大、meshCullDiameter × pointFadeRatio で0になり、その間はメッシュと重ねて切り替える。
+    /// 回折スパイク：表面輝度の等級(分解能 resolvingPower でクリップ)が spikeMagnThreshold より明るいとき、光点とは関係なく描く。
+    ///       明るさと長さは表面輝度、太さは視直径で決める(長さに上限、太さに下限のピクセル数)。
+    /// 光芒：光点が消えた視直径(meshCullDiameter × pointFadeRatio)から出始め、その glareFadeRatio 倍で最大になる。外縁は角半径 × (1 + glareSizeScale × 輝度係数)、強さも輝度係数に比例。
+    ///       輝度係数は表面輝度の等級(glareMagnDim で0、glareMagnBright で1)に、全体輝度による抑制(光点より強い)を掛けたもの。
     /// </summary>
     /// <param name="appDiameterDeg">視直径(度)</param>
     /// <param name="appMagn">大気減光後の等級</param>
-    private void UpdatePoint(MeshRenderer point, MaterialPropertyBlock block, float appDiameterDeg, double appMagn, Color col)
+    /// <param name="phaseDir">xyz:天体から光源への向き(Unity座標) w:光度中心のずれ(角半径に対する割合)。恒星は0</param>
+    private void UpdatePoint(MeshRenderer point, MaterialPropertyBlock pointBlock, MeshRenderer glare, MaterialPropertyBlock glareBlock,
+        float appDiameterDeg, double appMagn, Color col, Vector4 phaseDir)
     {
-        if (point == null || block == null) { return; }
-
-        //視直径によるフェード(分角で比べる)
-        float cull = Mathf.Max(meshCullDiameter, 0.01f);
-        float fade = 1f - Mathf.InverseLerp(cull, cull * pointFadeRatio, appDiameterDeg * 60f);
-
-        //限界等級。昼間は空が明るいので、地上の全光量の等級 + pointDaylightRange まで下げる
-        float limit = pointMagnLimit;
-        if (fluxAllSurface > 0f) { limit = Mathf.Min(limit, (float)CalcVisMagnitude(fluxAllSurface) + pointDaylightRange); }
-
+        float diameterArcmin = appDiameterDeg * 60f;
+        float angRad = appDiameterDeg * 0.5f * Mathf.Deg2Rad;
         float m = (float)appMagn;
-        float t = Mathf.InverseLerp(limit, pointMagnBright, m); //0:限界等級 1:最大
-        bool isVisible = isUsePoint && fade > 0f && m < limit; //NaN(天体の内側など)は描かない側に倒す
 
-        if (point.enabled != isVisible)
+        //視直径による光点のフェード(分角で比べる。1:最大 0:消える)
+        float cull = Mathf.Max(meshCullDiameter, 0.01f);
+        float fade = 1f - Mathf.InverseLerp(cull, cull * pointFadeRatio, diameterArcmin);
+
+        //地上の全光量の等級(全体輝度)。空が明るいほど小さい
+        bool isAllMagnValid = fluxAllSurface > 0f;
+        float allMagn = isAllMagnValid ? (float)CalcVisMagnitude(fluxAllSurface) : 0f;
+
+        if (point != null && pointBlock != null)
         {
-            point.enabled = isVisible;
+            //光点。限界等級は、昼間は空が明るいので全体輝度の等級 + pointDaylightRange まで下げる
+            float limit = pointMagnLimit;
+            if (isAllMagnValid) { limit = Mathf.Min(limit, allMagn + pointDaylightRange); }
+            float t = Mathf.InverseLerp(limit, pointMagnBright, m); //0:限界等級 1:最大
+            float pointIntensity = (isUsePoint && fade > 0f && m < limit) ? pointBrightness * t * fade : 0f; //NaNは0に倒す
+
+            //回折スパイク。表面輝度の等級 = 等級 + 5 log10(視直径 / 太陽の視直径)。分解能より小さい天体は分解能の円盤に光が広がるとみなす
+            float spikeIntensity = 0f;
+            float spikeLength = 0f;
+            if (isUseSpike)
+            {
+                float sbMagn = m + 5f * Mathf.Log10(Mathf.Max(diameterArcmin, resolvingPower) / SUN_DIAMETER_ARCMIN);
+                float over = spikeMagnThreshold - sbMagn; //出始めより何等明るいか
+                if (over > 0f)
+                {
+                    spikeIntensity = spikeBrightness * Mathf.Clamp01(over / spikeFadeMagn);
+                    spikeLength = Mathf.Min(spikeLengthMax, spikeLengthPerMagn * over);
+                }
+            }
+
+            bool isPointVisible = pointIntensity > 0f || spikeIntensity > 0f; //回折スパイクは光点とは関係なく出す
+            if (point.enabled != isPointVisible)
+            {
+                point.enabled = isPointVisible;
+            }
+            if (isPointVisible)
+            {
+                //BrightPoint は brightPointMagn から2等かけて強める
+                float brightPoint = brightPointStrength * Mathf.Clamp01((brightPointMagn - m) * 0.5f);
+
+                point.GetPropertyBlock(pointBlock);
+                pointBlock.SetColor("_Color", col);
+                pointBlock.SetFloat("_pointIntensity", pointIntensity);
+                pointBlock.SetFloat("_pointSize", Mathf.Lerp(pointSizeMin, pointSizeMax, t));
+                pointBlock.SetFloat("_brightPointStrength", brightPoint);
+                pointBlock.SetFloat("_spikeIntensity", spikeIntensity);
+                pointBlock.SetFloat("_spikeCount", spikeCount);
+                pointBlock.SetFloat("_spikeAngle", spikeAngle);
+                pointBlock.SetFloat("_spikeLength", spikeLength);
+                pointBlock.SetFloat("_spikeWidthRatio", spikeWidthRatio);
+                pointBlock.SetFloat("_spikeWidthMin", spikeWidthMin);
+                pointBlock.SetFloat("_bodyAngularRadius", angRad);
+                pointBlock.SetVector("_phaseDir", phaseDir);
+                point.SetPropertyBlock(pointBlock);
+            }
         }
-        if (!isVisible) { return; }
 
-        //スパイクは pointSpikeMagn から2等かけて強める
-        float spike = pointSpikeStrength * Mathf.Clamp01((pointSpikeMagn - m) * 0.5f);
+        if (glare != null && glareBlock != null)
+        {
+            //光芒の輝度係数。表面輝度の等級 = 等級 + 5 log10(視直径 / 太陽の視直径)
+            float glareT = 0f;
+            if (diameterArcmin > 0f)
+            {
+                float sbMagn = m + 5f * Mathf.Log10(diameterArcmin / SUN_DIAMETER_ARCMIN);
+                glareT = Mathf.InverseLerp(glareMagnDim, glareMagnBright, sbMagn);
+            }
+            //全体輝度による抑制(光点より強い)。天体が全体輝度と同じ明るさで1、glareDaylightRange 等暗いと0
+            if (isAllMagnValid)
+            {
+                glareT *= Mathf.Clamp01((allMagn + glareDaylightRange - m) / glareDaylightRange);
+            }
+            //光点が消えた視直径(meshCullDiameter × pointFadeRatio)から出始め、その glareFadeRatio 倍で最大になる
+            float glareStart = cull * pointFadeRatio;
+            float glareFade = Mathf.InverseLerp(glareStart, glareStart * glareFadeRatio, diameterArcmin);
+            float glareIntensity = isUseGlare ? glareBrightness * glareT * glareFade : 0f;
 
-        point.GetPropertyBlock(block);
-        block.SetColor("_Color", col);
-        block.SetFloat("_pointIntensity", pointBrightness * t * fade);
-        block.SetFloat("_pointSize", Mathf.Lerp(pointSizeMin, pointSizeMax, t));
-        block.SetFloat("_spikeStrength", spike);
-        point.SetPropertyBlock(block);
+            bool isGlareVisible = glareIntensity > 0f; //NaNは描かない側に倒す
+            if (glare.enabled != isGlareVisible)
+            {
+                glare.enabled = isGlareVisible;
+            }
+            if (isGlareVisible)
+            {
+                glare.GetPropertyBlock(glareBlock);
+                glareBlock.SetColor("_Color", col);
+                glareBlock.SetFloat("_glareIntensity", glareIntensity);
+                glareBlock.SetFloat("_glareAngularRadius", angRad * (1f + glareSizeScale * glareT));
+                glareBlock.SetFloat("_bodyAngularRadius", angRad);
+                glareBlock.SetVector("_phaseDir", phaseDir);
+                glare.SetPropertyBlock(glareBlock);
+            }
+        }
     }
 
     /// <summary>
@@ -1971,7 +2096,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] float sunBrightness = 100f, planetBrightness = 30f;
     [SerializeField, Range(-3.0f, 1.0f)] float dynamicRange;
     private bool debug_isWarnedInvalidFlux; //SanitizeFluxの警告を出したか(最初の1回だけ出す)
-    [SerializeField, Range(0f, 0.1f), Tooltip("地上の全光量に対する寄与度がこれ未満の光源は、ワールドライトを無効にする")] float lightCullRatio = 0.005f;
+    [SerializeField, Range(0f, 0.1f), Tooltip("地上の全光量に対する寄与度がこれ未満の恒星は、ワールドライトを無効にする(惑星ライトは対象外)")] float lightCullRatio = 0.005f;
     [SerializeField] float fluxAll, fluxAllLight, fluxAllSurface, fluxAllSurface_lx;
     [SerializeField]private Color L_meanLightColor;
     [Header("光源テスト")]
@@ -2376,7 +2501,8 @@ public class StarSystemManager : UdonSharpBehaviour
 
             //寄与度の低い光源はワールドライトを切る(リアルタイムライトの描画負荷を減らす)
             //天体メッシュ・惑星シェーダー・空の光源計算はこのライトのenabledに依存しない
-            bool isLightActive = L_fluxRatio_surface[i] >= lightCullRatio;
+            //惑星ライト(isUseLightで指定したもの)は間引かない
+            bool isLightActive = i >= planetLightStartIdx || L_fluxRatio_surface[i] >= lightCullRatio;
             if (L_lightObj[i].enabled != isLightActive)
             {
                 L_lightObj[i].enabled = isLightActive;
