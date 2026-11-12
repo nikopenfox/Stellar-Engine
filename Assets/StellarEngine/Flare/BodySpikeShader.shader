@@ -39,8 +39,11 @@
         CGINCLUDE
         #pragma target 3.0
         #include "UnityCG.cginc"
+        #include "StEBillboard.cginc"
 
         #define MAX_ANGULAR_RADIUS 1.4 //tanが発散しないよう角半径(rad)を抑える
+        #define REF_SCREEN_HEIGHT 1080.0 //大きさ(px)の基準にする画面の高さ。実際の解像度によらず、画面の高さに対する割合(px / 1080)で描く
+        #define REF_TAN_HALF_FOV_Y 0.5773503 //VRで使う基準の垂直視野角(60°)の半分のtan。VRでは高さ1080・視野角60°の画面でのpxとみなし、角度で描く
 
         struct appdata
         {
@@ -81,13 +84,19 @@
             //オブジェクトの原点をビュー空間に移す
             float3 center = UnityObjectToViewPos(float3(0, 0, 0));
             float dist = length(center);
-            float pixelToView = 2.0 * abs(center.z) / (_ScreenParams.y * UNITY_MATRIX_P[1][1]);
+        #if defined(USING_STEREO_MATRICES)
+            float pixelToView = 2.0 * dist * REF_TAN_HALF_FOV_Y / REF_SCREEN_HEIGHT; //VR(ステレオ):視野角によらず角度で決める
+        #else
+            float pixelToView = 2.0 * abs(center.z) / (REF_SCREEN_HEIGHT * UNITY_MATRIX_P[1][1]); //デスクトップ:画面の高さに対する割合
+        #endif
             float bodyHalf = tan(min(_bodyAngularRadius, MAX_ANGULAR_RADIUS)) * dist;
 
-            //位相角による中心のずらし(光源の向きを画面に投影した方向へ、角半径 × w)
-            float2 lightDir = mul((float3x3)UNITY_MATRIX_V, _phaseDir.xyz).xy;
-            float lightLen = length(lightDir);
-            if (lightLen > 1e-5) { center.xy += lightDir / lightLen * _phaseDir.w * bodyHalf; }
+            //ビルボードの基底(VRではワールドの上方向に合わせ、頭を傾けても回らない)
+            float3 right, up;
+            StE_BillboardBasis(center, right, up);
+
+            //位相角による中心のずらし(光源の向きをビルボードの面に投影した方向へ、角半径 × w)
+            center += StE_ProjectToBillboard(_phaseDir.xyz, right, up) * _phaseDir.w * bodyHalf;
 
             //発光中心の深度を1点だけ読む。画面外では読めないので描く側に倒す
             float4 centerClip = mul(UNITY_MATRIX_P, float4(center, 1.0));
@@ -103,7 +112,7 @@
             o.px = uv * halfPx;
 
             //隠れているときは頂点を1点にまとめる(面積0になり描かれない)
-            center.xy += isVisible ? uv * halfPx * pixelToView : float2(0, 0);
+            center += isVisible ? (uv.x * right + uv.y * up) * halfPx * pixelToView : float3(0, 0, 0);
             o.vertex = mul(UNITY_MATRIX_P, float4(center, 1.0));
             return o;
         }

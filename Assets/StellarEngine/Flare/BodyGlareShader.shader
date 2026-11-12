@@ -34,6 +34,7 @@
             #pragma multi_compile_instancing
 
             #include "UnityCG.cginc"
+            #include "StEBillboard.cginc"
 
             #define MAX_ANGULAR_RADIUS 1.4 //tanが発散しないよう角半径(rad)を抑える
 
@@ -74,12 +75,14 @@
                 float bodyHalf = tan(min(_bodyAngularRadius, MAX_ANGULAR_RADIUS)) * dist;
                 float glareHalf = tan(min(_glareAngularRadius, MAX_ANGULAR_RADIUS)) * dist;
 
-                //位相角による中心のずらし(光源の向きを画面に投影した方向へ、角半径 × w)
-                float2 lightDir = mul((float3x3)UNITY_MATRIX_V, _phaseDir.xyz).xy;
-                float lightLen = length(lightDir);
-                if (lightLen > 1e-5) { center.xy += lightDir / lightLen * _phaseDir.w * bodyHalf; }
+                //ビルボードの基底(VRではワールドの上方向に合わせ、頭を傾けても回らない)
+                float3 right, up;
+                StE_BillboardBasis(center, right, up);
 
-                center.xy += o.uv * glareHalf;
+                //位相角による中心のずらし(光源の向きをビルボードの面に投影した方向へ、角半径 × w)
+                center += StE_ProjectToBillboard(_phaseDir.xyz, right, up) * _phaseDir.w * bodyHalf;
+
+                center += (o.uv.x * right + o.uv.y * up) * glareHalf;
                 o.vertex = mul(UNITY_MATRIX_P, float4(center, 1.0));
                 return o;
             }

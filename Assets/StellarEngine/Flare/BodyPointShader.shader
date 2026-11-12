@@ -35,8 +35,11 @@
 
         CGINCLUDE
         #include "UnityCG.cginc"
+        #include "StEBillboard.cginc"
 
         #define MAX_ANGULAR_RADIUS 1.4 //tanが発散しないよう角半径(rad)を抑える
+        #define REF_SCREEN_HEIGHT 1080.0 //大きさ(px)の基準にする画面の高さ。実際の解像度によらず、画面の高さに対する割合(px / 1080)で描く
+        #define REF_TAN_HALF_FOV_Y 0.5773503 //VRで使う基準の垂直視野角(60°)の半分のtan。VRでは高さ1080・視野角60°の画面でのpxとみなし、角度で描く
 
         struct appdata
         {
@@ -66,28 +69,32 @@
         float _customDepthMul;
         float _orderedDepth;
 
-        //オブジェクトの原点をビュー空間に移し、位相角による中心のずらし(光源の向きを画面に投影した方向へ、角半径 × w)を加える
-        float3 BillboardCenter(out float dist, out float pixelToView)
+        //オブジェクトの原点をビュー空間に移し、位相角による中心のずらし(光源の向きをビルボードの面に投影した方向へ、角半径 × w)を加える
+        //right・up はビルボードの基底(StE_BillboardBasis)
+        float3 BillboardCenter(out float dist, out float pixelToView, out float3 right, out float3 up)
         {
             float3 center = UnityObjectToViewPos(float3(0, 0, 0));
             dist = length(center);
-            pixelToView = 2.0 * abs(center.z) / (_ScreenParams.y * UNITY_MATRIX_P[1][1]);
+        #if defined(USING_STEREO_MATRICES)
+            pixelToView = 2.0 * dist * REF_TAN_HALF_FOV_Y / REF_SCREEN_HEIGHT; //VR(ステレオ):視野角によらず角度で決める
+        #else
+            pixelToView = 2.0 * abs(center.z) / (REF_SCREEN_HEIGHT * UNITY_MATRIX_P[1][1]); //デスクトップ:画面の高さに対する割合
+        #endif
             float bodyHalf = tan(min(_bodyAngularRadius, MAX_ANGULAR_RADIUS)) * dist;
 
-            float2 lightDir = mul((float3x3)UNITY_MATRIX_V, _phaseDir.xyz).xy;
-            float lightLen = length(lightDir);
-            if (lightLen > 1e-5) { center.xy += lightDir / lightLen * _phaseDir.w * bodyHalf; }
+            StE_BillboardBasis(center, right, up);
+            center += StE_ProjectToBillboard(_phaseDir.xyz, right, up) * _phaseDir.w * bodyHalf;
             return center;
         }
 
-        //中心から半径 quadHalf(ビュー空間)のQuadを作る。isVisible が偽なら頂点を1点にまとめて描かない
-        v2f BillboardVert(appdata v, float3 center, float quadHalf, bool isVisible)
+        //中心から半径 quadHalf(ビュー空間)のQuadを基底 right・up で作る。isVisible が偽なら頂点を1点にまとめて描かない
+        v2f BillboardVert(appdata v, float3 center, float3 right, float3 up, float quadHalf, bool isVisible)
         {
             v2f o;
             UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
             float2 uv = v.uv * 2.0 - 1.0;
             o.q = uv;
-            center.xy += isVisible ? uv * quadHalf : float2(0, 0);
+            center += isVisible ? (uv.x * right + uv.y * up) * quadHalf : float3(0, 0, 0);
             o.vertex = mul(UNITY_MATRIX_P, float4(center, 1.0));
             return o;
         }
@@ -111,9 +118,10 @@
             {
                 UNITY_SETUP_INSTANCE_ID(v);
                 float dist, pixelToView;
-                float3 center = BillboardCenter(dist, pixelToView);
+                float3 right, up;
+                float3 center = BillboardCenter(dist, pixelToView, right, up);
                 bool isVisible = _pointIntensity > 0 && _pointSize > 0;
-                return BillboardVert(v, center, _pointSize * pixelToView, isVisible);
+                return BillboardVert(v, center, right, up, _pointSize * pixelToView, isVisible);
             }
 
             float4 frag (v2f i, out float outDepth : SV_Depth) : SV_Target
@@ -141,9 +149,10 @@
             {
                 UNITY_SETUP_INSTANCE_ID(v);
                 float dist, pixelToView;
-                float3 center = BillboardCenter(dist, pixelToView);
+                float3 right, up;
+                float3 center = BillboardCenter(dist, pixelToView, right, up);
                 bool isVisible = _glareIntensity > 0 && _glareAngularRadius > 0;
-                return BillboardVert(v, center, tan(min(_glareAngularRadius, MAX_ANGULAR_RADIUS)) * dist, isVisible);
+                return BillboardVert(v, center, right, up, tan(min(_glareAngularRadius, MAX_ANGULAR_RADIUS)) * dist, isVisible);
             }
 
             float4 frag (v2f i, out float outDepth : SV_Depth) : SV_Target

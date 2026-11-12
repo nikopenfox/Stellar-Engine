@@ -246,7 +246,7 @@ public class StarSystemImporter : MonoBehaviour
                     break;
             }
 
-            //–¼‘O‚©‚çŽå¯‚ðŒ©‚Â‚¯‚é
+            //–¼‘O‚©‚çŽå¯‚ðŒ©‚Â‚¯‚évlau
 
             pl.parentType = starsTmp.Find(st => st.name == planetData.parentBody);
             if (pl.parentType == null) 

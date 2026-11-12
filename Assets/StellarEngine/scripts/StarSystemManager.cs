@@ -12,6 +12,7 @@ using Unity.Mathematics;
 using System.Collections;
 using System;
 
+[UdonBehaviourSyncMode(BehaviourSyncMode.Manual)]
 public class StarSystemManager : UdonSharpBehaviour
 {
     private const float MIN_F = 1e-30f;　//floatの最小値を入れたいときの値
@@ -153,12 +154,23 @@ public class StarSystemManager : UdonSharpBehaviour
     private Vector3 overrideObsPos;
 
     [Header("同期")]
-    private bool isSyncRun, isOwner; //オーナー用
-    private bool isSynced; //他のプレイヤー用
+    private const float FREE_SYNC_INTERVAL = 0.5f; //フリーモード(惑星にいない)のとき、オーナーが同期する間隔(秒)
+    private const float SYNC_EPSILON = 1e-3f; //これ以下の差は値の変化とみなさない(スライダーとの往復の誤差を無視する)
+    private bool isSynced; //他のプレイヤー用: オーナーの値を一度でも受け取ったか
+    private float sync_freeTime; //フリーモードの同期タイマー
+    //オーナーが前回送った値(変化の検出用)
+    private double sync_prevTimeFactor;
+    private float sync_prevRotationAxis, sync_prevLatitude, sync_prevLongitude, sync_prevAtmOpacity;
+    private string sync_prevObsBodyName;
+    [SerializeField, UdonSynced] private long onr_sDate; //送信時のsDate
+    [SerializeField, UdonSynced] private double onr_serverTime; //送信時のサーバー時刻(秒)。受信側で遅延の分の経過時間を補正する
+    [SerializeField, UdonSynced] private double onr_timeFactor;
+    [SerializeField, UdonSynced] private string onr_obsBodyName = "";
+    [SerializeField, UdonSynced] private Vector3 onr_obsPosition; //惑星にいないときの観測者の座標
     [SerializeField, UdonSynced] private float onr_rotationAxis;
     [SerializeField, UdonSynced] private float onr_latitude;
     [SerializeField, UdonSynced] private float onr_longitude;
-    [SerializeField, UdonSynced] private float onr_yawing;
+    [SerializeField, UdonSynced] private float onr_atmOpacity; //大気密度
 
     //観測器
 
@@ -173,7 +185,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public string ext_specClass;
     public double ext_mass_star; //kg
     public double ext_rad_star; //km
-    public double ext_teff_star, ext_lum; //温度、光度
+    public double ext_teff_star, ext_lum_star; //温度、光度
 
     [Header("光学的要素")]
     [SerializeField] private Light ext_lightObj_star;
@@ -514,10 +526,16 @@ public class StarSystemManager : UdonSharpBehaviour
         //---------------------
         sd_res = 1000L;
 
-        nowDate = GetJ2000Seconds(DateTime.Now);
-        sDate = (long)nowDate * sd_res;
+        //Startより前にオーナーの値を受け取っていれば、そちらの時刻を使う
+        if (!isSynced)
+        {
+            nowDate = GetJ2000Seconds(DateTime.Now);
+            sDate = (long)nowDate * sd_res;
+        }
 
         //Debug.Log("now: " + nowDate);
+
+        InitSync();
     }
 
     
@@ -527,6 +545,7 @@ public class StarSystemManager : UdonSharpBehaviour
         double profTotal = ProfileNow();
         double prof = profTotal;
 
+        CheckSyncTrigger();
         FixedUpdateBody(prof);
 
         ProfileAdd(PROF_TOTAL, profTotal);
@@ -575,12 +594,14 @@ public class StarSystemManager : UdonSharpBehaviour
         {
             testRotation = Quaternion.Euler(testRotationEuler);
 
+            //オーナー以外がスライダーを動かすと、CheckSyncTrigger が値の変化を見てオーナーを取る
+            //(受信時は ApplySync がスライダーを同期した値に合わせる)
             rotationAxis = Mathf.Lerp(0, 360, debug_rotAxisSc.value);
             latitude = Mathf.Lerp(-90, 90, debug_latSc.value);
             longitude = Mathf.Lerp(-180, 180, debug_lonSc.value);
             yawing = Mathf.Lerp(0, 360, debug_yawSc.value);
 
-            
+
 
 
             debug_rotAxisT.text = rotationAxis.ToString() + "°";
@@ -771,25 +792,283 @@ public class StarSystemManager : UdonSharpBehaviour
         debug_profileLogStart = now;
     }
 
-    //同期処理初期化
+    //----- 同期 -----
+    //同期するのは 時間(sDate)・時間倍率・座標(いる天体の名前、惑星にいないときの座標)・自転軸・緯度・経度・大気密度 のみ
+    //オーナーが値を変えたら RequestSerialization し、他のプレイヤーは OnDeserialization でオーナーの値をコピーする
+
+    //ローカルプレイヤーがオーナーか(ネットワークがないときはオーナー扱い)
+    private bool IsSyncOwner()
+    {
+        VRCPlayerApi local = Networking.LocalPlayer;
+        if (!Utilities.IsValid(local)) { return true; }
+        return Networking.IsOwner(local, gameObject);
+    }
+
+    //同期処理初期化(Startから呼ぶ)。オーナーは初期状態を送る。他のプレイヤーは OnDeserialization で受け取る
     public void InitSync()
     {
-
-        if (Networking.IsMaster)
+        if (IsSyncOwner())
         {
-            Networking.SetOwner(Networking.LocalPlayer, gameObject);
+            SendSyncTrigger();
         }
-        else
+        else if (isSynced)
         {
-            
+            //Startより前に受け取った値を、sd_resが決まってから当て直す
+            ApplySync();
         }
     }
 
-    public void RunSync()
+    //明示的に同期を走らせる(オーナーのみ有効)
+    public void SendSyncTrigger()
     {
-        if (Networking.IsOwner(gameObject)) { return; }
+        if (!IsSyncOwner()) { return; }
 
+        RecordSyncPrev();
+        sync_freeTime = 0;
+        RequestSerialization();
+    }
 
+    //観測者のいる天体を変える(UIの入力欄などから呼ぶ)。空文字ならフリーモード(惑星にいない)
+    //見つからない名前は無視する(入力途中の文字列で観測者が動かないように)
+    //値が変わると CheckSyncTrigger が検出して同期する(オーナー以外ならオーナーを取る)
+    public bool SetObsBodyName(string bodyName)
+    {
+        if (bodyName == null) { bodyName = ""; }
+        if (bodyName == obs_body_name) { return true; }
+
+        if (bodyName != "" && !HasPlanetName(bodyName)) { return false; }
+
+        obs_body_name = bodyName;
+        obs_body_index = bodyName == "" ? -1 : FindPlanetIndex(bodyName);
+        return true;
+    }
+
+    public string GetObsBodyName()
+    {
+        return obs_body_name;
+    }
+
+    //----- 時間倍率 (UI・ボタンから呼ぶ) -----
+    //値が変わると CheckSyncTrigger が検出して同期する(オーナー以外ならオーナーを取る)
+
+    public double GetTimeFactor()
+    {
+        return timeFactor;
+    }
+
+    //時間倍率を指定した値にする(NaN・無限大は無視)
+    public void SetTimeFactor(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value)) { return; }
+        timeFactor = value;
+    }
+
+    //時間倍率に指定した倍率を掛ける
+    public void MultiplyTimeFactor(double multiplier)
+    {
+        SetTimeFactor(timeFactor * multiplier);
+    }
+
+    //現在のシミュレーション時刻の文字列(STimeUpdate で更新)
+    public string GetCurrentTimeText()
+    {
+        return sDateText;
+    }
+
+    //----- 表示用 (StarSystemUIManager から呼ぶ) -----
+
+    //恒星の観測等級(食・可視光比率・大気減光・地平線下の散乱を考慮したあとの等級。光点と同じ値)
+    public double GetObsMagnitudeStar(int i)
+    {
+        if (obsFlux_star_surface == null || i < 0 || i >= obsFlux_star_surface.Length) { return 0; }
+        return CalcVisMagnitude(obsFlux_star_surface[i]);
+    }
+
+    //惑星の観測等級(位相・食・大気減光・地平線下の散乱を考慮したあとの等級。光点と同じ値)
+    public double GetObsMagnitudePlanet(int i)
+    {
+        if (flux_planet_obs_surface == null || i < 0 || i >= flux_planet_obs_surface.Length) { return 0; }
+        return CalcVisMagnitude(flux_planet_obs_surface[i]);
+    }
+
+    //惑星の位相角(度、恒星-惑星-観測者)。0で満月(満ちている)、180で新月。観測者のいる惑星などで求められないときは -1
+    public float GetPhaseAnglePlanet(int i)
+    {
+        if (position_planet == null || i < 0 || i >= position_planet.Length) { return -1f; }
+        if (isLanded != null && i < isLanded.Length && isLanded[i]) { return -1f; }
+
+        int rootStar = GetRootStarIndex(i);
+        if (rootStar < 0 || position_star == null || rootStar >= position_star.Length) { return -1f; }
+
+        //UpdatePlanet の cosPhase と同じ向き(恒星→惑星、観測者→惑星)
+        Vector3 stp = (position_planet[i] - position_star[rootStar]).normalized;
+        Vector3 otp = (position_planet[i] - obs_position).normalized;
+        return Mathf.Acos(Mathf.Clamp(Vector3.Dot(stp, otp), -1f, 1f)) * Mathf.Rad2Deg;
+    }
+
+    //ログを出さずに惑星名があるかを調べる
+    private bool HasPlanetName(string bodyName)
+    {
+        if (name_planet == null) { return false; }
+        for (int i = 0; i < name_planet.Length; i++)
+        {
+            if (name_planet[i] == bodyName) { return true; }
+        }
+        return false;
+    }
+
+    //操作したプレイヤーをオーナーにしてから同期する(同期する値をオーナー以外が操作したとき用)
+    private void TakeOwnershipAndSync()
+    {
+        VRCPlayerApi local = Networking.LocalPlayer;
+        if (Utilities.IsValid(local) && !Networking.IsOwner(local, gameObject))
+        {
+            Networking.SetOwner(local, gameObject);
+        }
+        SendSyncTrigger();
+    }
+
+    //時刻を変える(J2000からの経過秒数)。オーナー以外が呼んだときは、呼んだプレイヤーがオーナーになる
+    public void ChangeTime(double j2000Seconds)
+    {
+        long res = sd_res > 0 ? sd_res : 1000L;
+        sDate = (long)Math.Round(j2000Seconds * res);
+        TakeOwnershipAndSync();
+    }
+
+    //毎フレーム呼ぶ: 同期する値の変化と、フリーモードの定期同期を確認する
+    //オーナー以外が値を変えた(スライダーを動かした など)ときは、そのプレイヤーがオーナーになって送る
+    private void CheckSyncTrigger()
+    {
+        bool isOwner = IsSyncOwner();
+
+        //オーナー以外は、オーナーの値を受け取るまでは比べない(初期値の違いでオーナーを奪わないように)
+        if (!isOwner && !isSynced) { return; }
+
+        bool isChanged = timeFactor != sync_prevTimeFactor
+            || IsSyncValueChanged(rotationAxis, sync_prevRotationAxis)
+            || IsSyncValueChanged(latitude, sync_prevLatitude)
+            || IsSyncValueChanged(longitude, sync_prevLongitude)
+            || IsSyncValueChanged(atmOpacity, sync_prevAtmOpacity)
+            || obs_body_name != sync_prevObsBodyName;
+
+        if (!isOwner)
+        {
+            if (isChanged)
+            {
+                TakeOwnershipAndSync();
+            }
+            return;
+        }
+
+        //フリーモード(惑星にいない)のときは一定間隔で座標を送る
+        if (!isChanged && obs_body_index == -1)
+        {
+            sync_freeTime += Time.deltaTime;
+            isChanged = sync_freeTime >= FREE_SYNC_INTERVAL;
+        }
+
+        if (isChanged)
+        {
+            SendSyncTrigger();
+        }
+    }
+
+    //スライダーとの往復(InverseLerp → Lerp)で出る誤差は変化とみなさない
+    private bool IsSyncValueChanged(float current, float prev)
+    {
+        return Mathf.Abs(current - prev) > SYNC_EPSILON;
+    }
+
+    //変化の検出用に、今の値を覚えておく
+    private void RecordSyncPrev()
+    {
+        sync_prevTimeFactor = timeFactor;
+        sync_prevRotationAxis = rotationAxis;
+        sync_prevLatitude = latitude;
+        sync_prevLongitude = longitude;
+        sync_prevAtmOpacity = atmOpacity;
+        sync_prevObsBodyName = obs_body_name;
+    }
+
+    //送信の直前に、オーナーの値を同期変数にコピーする
+    public override void OnPreSerialization()
+    {
+        onr_sDate = sDate;
+        onr_serverTime = Networking.GetServerTimeInSeconds();
+        onr_timeFactor = timeFactor;
+        onr_obsBodyName = obs_body_name == null ? "" : obs_body_name;
+        onr_obsPosition = obs_position;
+        onr_rotationAxis = rotationAxis;
+        onr_latitude = latitude;
+        onr_longitude = longitude;
+        onr_atmOpacity = atmOpacity;
+    }
+
+    public override void OnDeserialization()
+    {
+        if (IsSyncOwner()) { return; }
+
+        isSynced = true;
+        ApplySync();
+    }
+
+    //同期変数の値(オーナーの値)を自分の値にコピーする
+    private void ApplySync()
+    {
+        long res = sd_res > 0 ? sd_res : 1000L;
+
+        //送信からの経過時間 × 時間倍率 だけ進めて、遅延を補正する
+        double elapsed = Networking.GetServerTimeInSeconds() - onr_serverTime;
+        if (elapsed < 0) { elapsed = 0; }
+        sDate = onr_sDate + (long)Math.Round(res * elapsed * onr_timeFactor);
+
+        timeFactor = onr_timeFactor;
+        obs_body_name = onr_obsBodyName;
+        obs_body_index = FindPlanetIndex(obs_body_name);
+        if (obs_body_index == -1)
+        {
+            obs_position = onr_obsPosition;
+        }
+        rotationAxis = onr_rotationAxis;
+        latitude = onr_latitude;
+        longitude = onr_longitude;
+        atmOpacity = onr_atmOpacity;
+
+        //デバッグUIのスライダーも合わせる(スライダーから値を読み直しても同じ値になるように)
+        SetRotationSliders();
+        SetAtmOpacitySlider();
+
+        //受け取った値を基準にする(ここから変わったら自分の操作とみなしてオーナーを取る)
+        RecordSyncPrev();
+    }
+
+    //自転軸・緯度・経度のスライダーを今の値に合わせる
+    private void SetRotationSliders()
+    {
+        if (debug_rotAxisSc != null) { debug_rotAxisSc.value = Mathf.InverseLerp(0, 360, rotationAxis); }
+        if (debug_latSc != null) { debug_latSc.value = Mathf.InverseLerp(-90, 90, latitude); }
+        if (debug_lonSc != null) { debug_lonSc.value = Mathf.InverseLerp(-180, 180, longitude); }
+    }
+
+    //大気密度のスライダーを今の値に合わせる(atmOpacity = 10 × value² の逆)
+    private void SetAtmOpacitySlider()
+    {
+        if (debug_atmOpacitySc != null) { debug_atmOpacitySc.value = Mathf.Sqrt(Mathf.InverseLerp(0, 10, atmOpacity)); }
+    }
+
+    //後から入ったプレイヤーに、今の時刻を送り直す
+    public override void OnPlayerJoined(VRCPlayerApi player)
+    {
+        if (!Utilities.IsValid(player) || player.isLocal) { return; }
+        SendSyncTrigger();
+    }
+
+    //オーナーが代わったら、新しいオーナーが今の値を送る
+    public override void OnOwnershipTransferred(VRCPlayerApi player)
+    {
+        if (!Utilities.IsValid(player) || !player.isLocal) { return; }
+        SendSyncTrigger();
     }
 
     private DateTime STimeToDateTime()
@@ -1113,6 +1392,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public void UpdatePlanet()
     {
         EnsureOcclusionArrays();
+        UpdateAtmParams(); //地上の光の透過率を空(StEAtmosphere)と同じ大気で求めるため
         EnsurePointBlocks();
 
         for (int i = 0;i < name_planet.Length;i++)
@@ -1139,6 +1419,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_flux_surface[lightIndex_planet[i]] = MIN_F;
                 L_surfaceBrightness[lightIndex_planet[i]] = MIN_F;
                 L_airmass[lightIndex_planet[i]] = 1f;
+                L_transmittance[lightIndex_planet[i]] = Vector3.one;
 
                 L_exposureness[lightIndex_planet[i]] = 0f;
 
@@ -1224,10 +1505,11 @@ public class StarSystemManager : UdonSharpBehaviour
             height_planet_angle[i] = (180 / Mathf.PI) * Mathf.Asin(Mathf.Clamp(height_planet[i], -1f, 1f)); //内積は誤差で1を超えることがある
 
             var airmass = CalcAirMass(height_planet[i], appDiameter_planet[i], false);
+            Vector3 trans = atm_isValid ? CalcStETransmittance((float)height_planet[i]) : Vector3.one; //空と同じ大気での透過率
             //大気密度による地平線下での散乱強さ
             float scatterDensity = atmOpacity * atmOpacity;
             float exposureness = CalcExposureness(height_planet_angle[i], appDiameter_planet[i], 0f);
-            float surfaceFlux = (float)CalcFluxWithAirMass(flux_planet_obs[i], airmass, 0.15);
+            float surfaceFlux = CalcSurfaceFlux(flux_planet_obs[i], airmass, trans);
 
             flux_planet_obs_surface[i] = Mathf.Lerp(surfaceFlux * scatterDensity, surfaceFlux, exposureness);
 
@@ -1248,6 +1530,7 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_flux_surface[lightIndex_planet[i]] = (float)flux_planet_obs_surface[i];
                 L_surfaceBrightness[lightIndex_planet[i]] = CalcSurfaceBrightness(L_flux_light[lightIndex_planet[i]], rad_planet[i], distance_planet[i]);
                 L_airmass[lightIndex_planet[i]] = (float)airmass;
+                L_transmittance[lightIndex_planet[i]] = trans;
                 L_lightColorBase[lightIndex_planet[i]] = lightBaseColor_planet[i];
 
                 L_exposureness[lightIndex_planet[i]] = exposureness;
@@ -1260,7 +1543,7 @@ public class StarSystemManager : UdonSharpBehaviour
 
             //光点・回折スパイク・光芒(大気減光後の明るさで描く)
             {
-                Color pointCol = lightBaseColor_planet[i] * GetReyleighColor((float)airmass, 0.35f);
+                Color pointCol = lightBaseColor_planet[i] * GetAtmReddening((float)airmass, trans);
                 //位相角による中心のずらし: 光源の向き(Unity座標)と、光度中心のずれ(角半径に対する割合)
                 Vector3 toLight = position_star[rootStar] - position_planet[i];
                 Vector3 toLightUnity = (view_surfaceQUnity * new Vector3(toLight.x, toLight.z, toLight.y)).normalized;
@@ -1371,6 +1654,7 @@ public class StarSystemManager : UdonSharpBehaviour
     public void UpdateStar()
     {
         EnsureOcclusionArrays();
+        UpdateAtmParams(); //地上の光の透過率を空(StEAtmosphere)と同じ大気で求めるため
         EnsurePointBlocks();
 
         for (int i = 0; i < name_star.Length; i++)
@@ -1421,11 +1705,12 @@ public class StarSystemManager : UdonSharpBehaviour
             //Debug.Log("ots: " + ots + " surface: " + surfaceVec);
 
             var airmass = CalcAirMass(height_star[i], appDiameter_star[i], false);
+            Vector3 trans = atm_isValid ? CalcStETransmittance((float)height_star[i]) : Vector3.one; //空と同じ大気での透過率
 
             //大気密度による地平線下での散乱強さ
             float scatterDensity = atmOpacity * atmOpacity;
             float exposureness = CalcExposureness(height_star_angle[i], appDiameter_star[i], 0f);
-            float surfaceFlux = (float)CalcFluxWithAirMass(obsFlux_star_vis[i], airmass, 0.15);
+            float surfaceFlux = CalcSurfaceFlux(obsFlux_star_vis[i], airmass, trans);
 
             obsFlux_star_surface[i] = Mathf.Lerp(surfaceFlux * scatterDensity, surfaceFlux, exposureness);
 
@@ -1446,6 +1731,7 @@ public class StarSystemManager : UdonSharpBehaviour
             double unoccludedFlux = occlusion_star[i] > 0f ? obsFlux_star_surface[i] / occlusion_star[i] : 0;
             L_surfaceBrightness[i] = CalcSurfaceBrightness(unoccludedFlux, rad_star[i] / scaledAU, distance_star[i]);
             L_airmass[i] = (float)airmass;
+            L_transmittance[i] = trans;
             L_absLum[i] = (float)lum[i];
             L_dist[i] = distance_star[i];
 
@@ -1454,7 +1740,7 @@ public class StarSystemManager : UdonSharpBehaviour
             //光点・回折スパイク・光芒(大気減光後の明るさで描く。恒星は自ら光るので中心はずらさない)
             {
                 Color pointCol = TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], (float)teff_star[i], 1.0f)
-                    * GetReyleighColor((float)airmass, 0.35f);
+                    * GetAtmReddening((float)airmass, trans);
                 float spikeIntensity = UpdatePoint(GetRenderer(point_star, i), GetBlock(pointBlock_star, i),
                     GetRenderer(spike_star, i), GetBlock(spikeBlock_star, i),
                     starDiameterDeg, CalcVisMagnitude(obsFlux_star_surface[i]), pointCol, Vector4.zero, GetFlag(isUsePSF_star, i));
@@ -2040,7 +2326,8 @@ public class StarSystemManager : UdonSharpBehaviour
         Vector3 obsMarkerPos = (systemMap_Base.position - systemMap_obsMarker.position) * systemMap_scale;
 
 
-        if (isDebug && obs_body_index == -1)
+        //フリーモードの座標はオーナーのマーカーで決め、他のプレイヤーは同期した値を使う
+        if (isDebug && obs_body_index == -1 && IsSyncOwner())
         {
             obs_position = new Vector3(-obsMarkerPos.x, -obsMarkerPos.z, -obsMarkerPos.y);
 
@@ -2077,7 +2364,7 @@ public class StarSystemManager : UdonSharpBehaviour
         ext_mass_star = mass_star[star];
         ext_rad_star = rad_star[star];
         ext_teff_star = teff_star[star];
-        ext_lum = lum[star];
+        ext_lum_star = lum[star];
         ext_lightObj_star = lightObj_star[star];
         ext_obsFlux_star = obsFlux_star[star];
         ext_obsFlux_star_vis = obsFlux_star_vis[star];
@@ -2210,6 +2497,138 @@ public class StarSystemManager : UdonSharpBehaviour
         return am * atmOpacity;
     }
 
+    //---- StEAtmosphere と同じ大気での光路長(太陽側の透過率) ----
+    //空のシェーダー(StEAtmosphere.shader)の ChapmanColumn / SpherePathRange / ShellPathRange / LayerTau と同じ式。変えるときは両方揃える
+    private const int ABSORB_SUBSHELL = 4; //シェーダーの #define ABSORB_SUBSHELL と揃える
+    private const float ATM_MAX_EXPONENT = 80f; //シェーダーの MAX_EXPONENT と揃える
+    private const float ATM_MIN_SHELL_THICKNESS = 1e-3f; //km。シェーダーの MIN_SHELL_THICKNESS と揃える
+    private bool atm_isValid; //StEAtmosphere の値を読めたか(false なら従来の CalcAirMass を使う)
+    private float atm_X, atm_H, atm_h0; //惑星半径 / H、スケールハイト(km)、観測者の高さ / H
+    private Vector3 atm_tauZ; //海抜0から天頂方向の光学的厚さ(RGB)
+
+    /// <summary>
+    /// 空のマテリアル(StEAtmosphere)から大気のパラメータを読み、観測者の高さを求める。
+    /// 観測者の高さはシェーダーと同じく、天球(プレイヤーの頭)の y と _SeaLevelY・_AltitudeScale から求める
+    /// </summary>
+    private void UpdateAtmParams()
+    {
+        atm_isValid = false;
+        if (!isUseStEAtmosphere) { return; }
+        Material sky = RenderSettings.skybox;
+        if (sky == null) { return; }
+
+        atm_H = Mathf.Max(sky.GetFloat("_ScaleHeight"), 1e-3f);
+        atm_X = Mathf.Max(sky.GetFloat("_PlanetRadius"), 1f) / atm_H;
+        Vector4 tz = sky.GetVector("_ZenithOpticalDepth");
+        atm_tauZ = new Vector3(Mathf.Max(tz.x, 1e-6f), Mathf.Max(tz.y, 1e-6f), Mathf.Max(tz.z, 1e-6f));
+        float camY = cSphere != null ? cSphere.transform.position.y : 0f;
+        atm_h0 = Mathf.Max(0f, (camY - sky.GetFloat("_SeaLevelY")) * sky.GetFloat("_AltitudeScale") * 0.001f) / atm_H;
+        atm_isValid = true;
+    }
+
+    //高さ h から天頂角 χ の向きに大気の外までの空気の柱の量(海抜0の密度 × H を1とした値。Schüler 2012 の近似)。X・h は H 単位
+    private float ChapmanColumn(float X, float h, float cosChi)
+    {
+        float c = Mathf.Sqrt(X + h);
+        if (cosChi >= 0f) { return c / (c * cosChi + 1f) * Mathf.Exp(-h); }
+
+        float x0 = Mathf.Sqrt(Mathf.Clamp01(1f - cosChi * cosChi)) * (X + h);
+        float c0 = Mathf.Sqrt(x0);
+        return 2f * c0 * Mathf.Exp(Mathf.Min(X - x0, ATM_MAX_EXPONENT)) - c / (1f - c * cosChi) * Mathf.Exp(-h);
+    }
+
+    //半径 R の球の内側を、レイ(中心からの距離 r0、鉛直方向との内積 mu)が t∈[0, ∞) に通る長さ(H単位)。r0² - R² は (r0 - R)(r0 + R) で計算する
+    private float SpherePath(float r0, float mu, float R)
+    {
+        float b = r0 * mu;
+        float D = b * b - (r0 - R) * (r0 + R);
+        if (D <= 0f) { return 0f; }
+        float s = Mathf.Sqrt(D);
+        return Mathf.Max(0f, (-b + s) - Mathf.Max(-b - s, 0f));
+    }
+
+    //吸収層1つを通る長さ / 殻の厚さ(入れ子の殻の合計。シェーダーの LayerTau の τ を除いた部分)
+    private float LayerPathRatio(float r1, float r2, float soft1, float soft2, float r0, float mu)
+    {
+        float path = 0f;
+        for (int k = 0; k < ABSORB_SUBSHELL; k++)
+        {
+            float f = (k + 0.5f) / ABSORB_SUBSHELL;
+            path += SpherePath(r0, mu, r2 - soft2 * f) - SpherePath(r0, mu, r1 + soft1 * f);
+        }
+        float sumThick = ABSORB_SUBSHELL * ((r2 - r1) - 0.5f * (soft1 + soft2));
+        return path / Mathf.Max(sumThick, 1e-6f);
+    }
+
+    //使う吸収層の数(ApplyAbsorbLayers と同じ)
+    private int GetAbsorbLayerCount()
+    {
+        if (absorbBottom_layer == null || absorbTop_layer == null || absorbTau_layer == null) { return 0; }
+        return Mathf.Min(Mathf.Min(absorbBottom_layer.Length, absorbTop_layer.Length), Mathf.Min(absorbTau_layer.Length, MAX_ABSORB_LAYER));
+    }
+
+    /// <summary>
+    /// 大気上端から観測者までの光の透過率(RGB)。空のシェーダーの太陽側の計算を、代表点を観測者として行ったもの
+    /// 光学的厚さ = _ZenithOpticalDepth × atmOpacity × Chapman(観測者の高さ, 光源の天頂角) + Σ吸収層の τ × atmOpacity × 通る長さ / 厚さ
+    /// (吸収層は、光源が地平線より下なら地表で水平な視線の片側の長さ × 2。シェーダーと同じ近似)
+    /// </summary>
+    private Vector3 CalcStETransmittance(float cosSun)
+    {
+        float density = Mathf.Max(atmOpacity, 0f);
+        float rObs = atm_X + atm_h0;
+        Vector3 tau = atm_tauZ * (density * ChapmanColumn(atm_X, atm_h0, cosSun));
+
+        int n = GetAbsorbLayerCount();
+        for (int j = 0; j < n; j++)
+        {
+            //シェーダーの GetAbsorbLayer と同じクランプ
+            float bottom = Mathf.Max(absorbBottom_layer[j], 0f);
+            float top = Mathf.Max(absorbTop_layer[j], bottom + ATM_MIN_SHELL_THICKNESS);
+            float halfThick = 0.5f * (top - bottom);
+            float softBottom = (absorbSoftBottom_layer != null && j < absorbSoftBottom_layer.Length) ? absorbSoftBottom_layer[j] : 0f;
+            float softTop = (absorbSoftTop_layer != null && j < absorbSoftTop_layer.Length) ? absorbSoftTop_layer[j] : 0f;
+            float r1 = atm_X + bottom / atm_H;
+            float r2 = atm_X + top / atm_H;
+            float soft1 = Mathf.Clamp(softBottom, 0f, halfThick) / atm_H;
+            float soft2 = Mathf.Clamp(softTop, 0f, halfThick) / atm_H;
+            Vector3 lt = absorbTau_layer[j];
+            Vector3 layerTau = new Vector3(Mathf.Max(lt.x, 0f), Mathf.Max(lt.y, 0f), Mathf.Max(lt.z, 0f));
+
+            float ratio = cosSun >= 0f
+                ? LayerPathRatio(r1, r2, soft1, soft2, rObs, cosSun)
+                : 2f * LayerPathRatio(r1, r2, soft1, soft2, atm_X, 0f);
+            tau += layerTau * (ratio * density);
+        }
+
+        return new Vector3(
+            Mathf.Exp(-Mathf.Min(tau.x, ATM_MAX_EXPONENT)),
+            Mathf.Exp(-Mathf.Min(tau.y, ATM_MAX_EXPONENT)),
+            Mathf.Exp(-Mathf.Min(tau.z, ATM_MAX_EXPONENT)));
+    }
+
+    //透過率(RGB)の可視光での平均(輝度の重み)
+    private float TransmittanceLuminance(Vector3 t)
+    {
+        return 0.2126f * t.x + 0.7152f * t.y + 0.0722f * t.z;
+    }
+
+    /// <summary>
+    /// 大気による光の色の変化(赤化)。StEAtmosphere の値を読めたら透過率から、読めなければ従来の GetReyleighColor から求める。
+    /// 明るさの変化はフラックス側で扱うので、色は最大の成分で割ってから従来と同じく NormalizeRGB で正規化する
+    /// </summary>
+    private Color GetAtmReddening(float airmass, Vector3 trans)
+    {
+        if (!atm_isValid) { return GetReyleighColor(airmass, 0.35f); }
+        return NormalizeRGB(ColorScaling(new Color(trans.x, trans.y, trans.z, 1f)));
+    }
+
+    //大気の外からのフラックスを地上のフラックスに変換する(StEAtmosphere の値を読めたら透過率、読めなければ従来の光学的厚さ 0.15)
+    private float CalcSurfaceFlux(double flux, double airmass, Vector3 trans)
+    {
+        if (!atm_isValid) { return (float)CalcFluxWithAirMass(flux, airmass, 0.15); }
+        return Mathf.Clamp((float)flux * TransmittanceLuminance(trans), 0f, (float)flux);
+    }
+
     //天体高度を地表照度に変換
     private double CalcFluxWithAirMass(double flux, double airmass, double optThick)
     {
@@ -2311,6 +2730,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] Vector3[] L_lightVector;
     [SerializeField] Color[] L_lightColorBase;
     [SerializeField] Color[] L_lightColor;
+    [SerializeField] Color[] L_lightColor_top; //大気による赤化の前の色(StEAtmosphere はシェーダーで赤化を計算する)
     [SerializeField] bool[] L_isLanded;
     [SerializeField] float[] L_fluxBol, L_absLum, L_absLum_v;
     [SerializeField] float[] L_flux;
@@ -2319,6 +2739,7 @@ public class StarSystemManager : UdonSharpBehaviour
     [SerializeField] float[] L_surfaceBrightness; //表面輝度(地上) 観測者からの距離によらない。1AUから見た太陽と同じ視直径のときのフラックスに換算
     [SerializeField] float[] L_lightPhase; //天体の位相(恒星は常に1)
     [SerializeField] float[] L_airmass;
+    [SerializeField] Vector3[] L_transmittance; //大気上端から観測者までの透過率(RGB)。StEAtmosphere 使用時に、空のシェーダーと同じ大気(Chapman 関数 + 吸収層)で求める
     [SerializeField] float[] L_exposureness; //露出面積　天体が見えている
     [SerializeField] float[] L_dist;
     [SerializeField] float[] L_lx, L_lx_light, L_lx_surface;
@@ -2348,7 +2769,35 @@ public class StarSystemManager : UdonSharpBehaviour
     [HideInInspector] public MaterialPropertyBlock skyMaterialBlock;
     private Vector3 currentLightVec;
     private int[] skyLightIdx; //空に渡しているライト番号(L_lightObjの番号)
+    private float[] skyLightEff; //ライトごとの空への寄与の見積もり(大気上端の放射束 × EstimateSkyLuminance。L_lightObjの番号)
+    private float skyLightEffMax; //skyLightEff の最大
+    private float skyLightFluxAll; //空の光源の候補すべての大気上端の放射束の合計(順応なしの明るさに使う)
+    private bool isSkyLightFluxOrder; //true: 見積もりが使えないので大気上端の放射束の順で選んでいる(順応しない)
     private string[] skyProp_lightVector, skyProp_lightColor, skyProp_lightWeight;
+    private string[] skyProp_lightIntensity; //StEAtmosphere の _LightIntensity0〜3
+    private string[] skyProp_skyLightColor; //StEAtmosphere の _SkyLightColor0〜3(_LightColor0 は Unity 組み込みの名前で、描画時に Light の色に上書きされるため使わない)
+    [SerializeField, Tooltip("ON: 空に StEAtmosphere(単一散乱の近似)を使う。RenderSettings.skybox を StEAtmosphere のマテリアルにしておくこと")] private bool isUseStEAtmosphere;
+
+    //StEAtmosphere の相対ライティング(目の順応)。光源どうしの比は変えず、空全体に1つのゲインだけを掛ける
+    [Header("空の相対ライティング(StEAtmosphere)")]
+    [SerializeField, Range(0f, 1f), Tooltip("0: 順応なし(大気上端の放射束の合計で明るさを決める)、1: 地上と同じく、順応量(地表の全光量 + 空の明るさの見積もり)で明るさを決める。間は対数で混ぜる")] private float skyAdaptStrength = 1f;
+    [SerializeField, Tooltip("空の明るさの見積もりを順応量にどれだけ入れるか。小さいと薄明や月夜の空が明るく(飛びやすく)なる")] private float skyAdaptWeight = 1f;
+    [SerializeField, Range(0f, 0.1f), Tooltip("空への寄与が最も大きいライトのこの倍率未満のライトは、空に渡さない(ほぼ見えない弱いライトの情報落ちによるちらつきを防ぐ)")] private float skyLightCullRatio = 1e-4f;
+    [SerializeField, Tooltip("ON: 地上のライトと環境光も、空と同じ順応量(地表の全光量 + 空の明るさ)で明るさを決める。薄明で空が明るい間は地上も暗くなりすぎない")] private bool isUseSkyAdaptGround = true;
+    [SerializeField] private float skyDiffuseFlux; //空の明るさの見積もり(地表を照らす天空光とみなす。確認用)
+    [SerializeField] private float skyAdaptFlux; //順応量(確認用)。地表の全光量 + skyDiffuseFlux
+    [SerializeField] private float skyAdaptLx; //順応量の照度(lx、確認用)
+    private float groundAdaptFlux, groundAdaptLx; //地上のライト・環境光の順応量(isUseSkyAdaptGround なら skyAdaptFlux / skyAdaptLx、OFF なら地表の全光量)
+
+    //StEAtmosphere の吸収層(高さが一定の範囲にある一様な球殻)。同じ番号が同じ層。最大 MAX_ABSORB_LAYER 層(3つの配列の短い方の数だけ使う)
+    private const int MAX_ABSORB_LAYER = 4; //シェーダーの #define MAX_ABSORB_LAYER と揃える
+    [Header("大気の吸収層(StEAtmosphere)")]
+    [SerializeField, Tooltip("吸収層の下端の高さ(km、海抜0基準)")] private float[] absorbBottom_layer = new float[0];
+    [SerializeField, Tooltip("吸収層の上端の高さ(km、海抜0基準)")] private float[] absorbTop_layer = new float[0];
+    [SerializeField, Tooltip("吸収層の鉛直方向の光学的厚さ(RGB)。色と強さの両方を表す(天頂方向の透過率は e^(-τ))")] private Vector3[] absorbTau_layer = new Vector3[0];
+    [SerializeField, Tooltip("吸収層の下側の縁の幅(km)。縁を柔らかくする。地表から始まる層は0。層の厚さの半分まで。足りない番号は0")] private float[] absorbSoftBottom_layer = new float[0];
+    [SerializeField, Tooltip("吸収層の上側の縁の幅(km)。縁を柔らかくする。層の厚さの半分まで。足りない番号は0")] private float[] absorbSoftTop_layer = new float[0];
+    private string[] skyProp_absorbShell, skyProp_absorbTau; //StEAtmosphere の _AbsorbShell0〜3 / _AbsorbTau0〜3
 
     [Header("大気")]
     [SerializeField, Tooltip("大気機能を使う？")] private bool isUseAtmosphere;
@@ -2451,12 +2900,15 @@ public class StarSystemManager : UdonSharpBehaviour
         L_lightColorBase = new Color[lightNum];
         L_lightVector = new Vector3[lightNum];
         L_lightColor = new Color[lightNum];
+        L_lightColor_top = new Color[lightNum];
         L_flux = new float[lightNum];
         L_flux_light = new float[lightNum];
         L_flux_surface = new float[lightNum];
         L_surfaceBrightness = new float[lightNum];
         L_lightPhase = new float[lightNum];
         L_airmass = new float[lightNum];
+        L_transmittance = new Vector3[lightNum];
+        for (int j = 0; j < lightNum; j++) { L_transmittance[j] = Vector3.one; }
         L_exposureness = new float[lightNum];
         L_fluxBol = new float[lightNum];
         L_dist = new float[lightNum];
@@ -2610,9 +3062,10 @@ public class StarSystemManager : UdonSharpBehaviour
                 L_lightMesh_star[i].GetPropertyBlock(L_matBlock_star[i]);
 
                 var col = TempToColor(profile_teff, profile_color, profile_count[currentPresetIndex], profile_index[currentPresetIndex], L_teff[i], 1.0f) * 1f;
-                var rey = GetReyleighColor(L_airmass[i], 0.35f);
+                var rey = GetAtmReddening(L_airmass[i], L_transmittance[i]);
                 L_lightObj[i].color = col * rey;
                 L_lightColor[i] = col * rey;
+                L_lightColor_top[i] = col;
                 L_matBlock_star[i].SetColor("_emissive", col * rey);
 
                 //可視光フラックス計算
@@ -2629,10 +3082,11 @@ public class StarSystemManager : UdonSharpBehaviour
                 //Debug.Log("pi"+pi);
                 L_lightMesh_planet[pi].GetPropertyBlock(L_matBlock_planet[pi]);
                 //var col = 
-                var rey = GetReyleighColor(L_airmass[i], 0.35f);
+                var rey = GetAtmReddening(L_airmass[i], L_transmittance[i]);
                 Color baseCol = ColorScaling(L_lightColorBase[i] * rey);
                 Color col = ColorScaling(Color.white * rey);
                 L_lightColor[i] = baseCol * rey;
+                L_lightColor_top[i] = ColorScaling(L_lightColorBase[i]);
                 L_lightObj[i].color = baseCol * rey;
                 L_matBlock_planet[pi].SetColor("_Color", col * rey);
                 //L_lightMesh_planet[pi].GetPropertyBlock(L_matBlock_planet[pi]);
@@ -2662,7 +3116,13 @@ public class StarSystemManager : UdonSharpBehaviour
         fluxAllLight = fxLight + ambient;
         fluxAllSurface = fxSurf + ambient;
         fluxAllSurface_lx = fxSurf * LX + ambient;
-        intensityAll = intensityBase * LogScaling(fluxAllSurface);
+
+        //順応量。空(StEAtmosphere)と共通で、地表の全光量に空の明るさ(天空光)を足したもの
+        //isUseSkyAdaptGround が OFF・StEAtmosphere を使わないときは従来どおり地表の全光量(skyDiffuseFlux = 0)
+        CalcSkyLightEff();
+        groundAdaptFlux = isUseSkyAdaptGround ? skyAdaptFlux : fluxAllSurface;
+        groundAdaptLx = isUseSkyAdaptGround ? skyAdaptLx : fluxAllSurface_lx;
+        intensityAll = intensityBase * LogScaling(groundAdaptFlux);
 
         for (int i = 0; i < L_lightObj.Length; i++)
         {
@@ -2708,7 +3168,9 @@ public class StarSystemManager : UdonSharpBehaviour
             }
             if (isLightActive)
             {
-                L_lightObj[i].intensity = intensityAll * L_fluxRatio_surface[i] * belowCor * L_exposureness[i];
+                //順応量に対する割合(地上の全光量に対する寄与度 L_fluxRatio_surface は、ライトの間引きや天体メッシュのためにそのまま残す)
+                float adaptRatio = groundAdaptFlux > 0f ? L_flux_surface[i] / groundAdaptFlux : 0f;
+                L_lightObj[i].intensity = intensityAll * adaptRatio * belowCor * L_exposureness[i];
             }
 
 
@@ -2792,10 +3254,14 @@ public class StarSystemManager : UdonSharpBehaviour
             }
         }
 
-        atmColorTint = Color.Lerp(L_meanLightColor, L_ambColorBase_sky, ambLightBrightness / 2) * Mathf.Clamp01(GetBelow(fluxAllSurface_lx)); ;
+        //環境光は空と同じ順応量(groundAdaptLx / groundAdaptFlux)で決める(薄明で空が明るい間は環境光も残る)
+        //エディタの OnValidate では UpdateLight より先に呼ばれるので、未計算なら地表の全光量を使う
+        float adaptFlux = groundAdaptFlux > 0f ? groundAdaptFlux : fluxAllSurface;
+        float adaptLx = groundAdaptFlux > 0f ? groundAdaptLx : fluxAllSurface_lx;
+        atmColorTint = Color.Lerp(L_meanLightColor, L_ambColorBase_sky, ambLightBrightness / 2) * Mathf.Clamp01(GetBelow(adaptLx)); ;
 
-        
-        var scaledFlux = LogScaling(fluxAllSurface);
+
+        var scaledFlux = LogScaling(adaptFlux);
         var brightnessCor = scaledFlux * LogScaling(ambLightBrightness) * LogScaling(Mathf.Clamp01(atmOpacity * atmOpacity)); //明るさ補正
 
         //環境光の色を変える
@@ -2805,6 +3271,13 @@ public class StarSystemManager : UdonSharpBehaviour
         RenderSettings.ambientGroundColor = L_ambColorBase_ground * atmColorTint * brightnessCor;
         RenderSettings.fogColor = Color.Lerp(L_meanLightColor, L_ambColorBase_equator, 0.8f) * atmColorTint * brightnessCor;
         RenderSettings.fogDensity = 0.01f * atmHaze;
+
+        //新しい大気(StEAtmosphere)は散乱と減衰をシェーダーで計算するので、光源と密度だけを渡す
+        if (isUseStEAtmosphere)
+        {
+            UpdateStEAtmosphere();
+            return;
+        }
 
         if (atmOpacity <= 0) {
             RenderSettings.skybox.SetFloat("_exposure", 0f);
@@ -2913,6 +3386,294 @@ public class StarSystemManager : UdonSharpBehaviour
         }
     }
 
+    /// <summary>
+    /// 空(StEAtmosphere)に光源と大気密度を渡す。空への寄与の見積もり(L_flux × EstimateSkyLuminance)の大きい順に最大 MAX_LIGHT_SOURCE 個のライトを選び、
+    /// 最も大きいものの skyLightCullRatio 倍未満は使わない(地平線の下の光源も上空の空気を照らすので候補にする)。強さ(_LightIntensity)は選んだライトの大気上端の放射束の構成比、
+    /// 色は大気による赤化の前の色 L_lightColor_top(赤化と減衰はシェーダーが計算する)。
+    /// 全体の明るさ(_Brightness)は skyLightBase × CalcSkyExposure(地上と同じ相対ライティング。光源どうしの比は変えない)
+    /// </summary>
+    private void UpdateStEAtmosphere()
+    {
+        Material sky = RenderSettings.skybox;
+        if (sky == null) { return; }
+
+        //プロパティ名(毎回の文字列連結を避けるため初回だけ作る)
+        if (skyProp_lightIntensity == null)
+        {
+            skyProp_lightVector = new string[MAX_LIGHT_SOURCE];
+            skyProp_lightColor = new string[MAX_LIGHT_SOURCE];
+            skyProp_lightWeight = new string[MAX_LIGHT_SOURCE];
+            skyProp_lightIntensity = new string[MAX_LIGHT_SOURCE];
+            skyProp_skyLightColor = new string[MAX_LIGHT_SOURCE];
+            for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+            {
+                skyProp_lightVector[k] = "_LightVector" + k;
+                skyProp_lightColor[k] = "_LightColor" + k;
+                skyProp_lightWeight[k] = "_LightWeight" + k;
+                skyProp_lightIntensity[k] = "_LightIntensity" + k;
+                skyProp_skyLightColor[k] = "_SkyLightColor" + k;
+            }
+        }
+        if (skyLightIdx == null) { skyLightIdx = new int[MAX_LIGHT_SOURCE]; }
+        //空への寄与の見積もりは UpdateLight で求めている(エディタの OnValidate では UpdateLight より先に呼ばれるので、未計算ならここで求める)
+        if (skyLightEff == null || skyLightEff.Length != L_lightObj.Length) { CalcSkyLightEff(); }
+
+        //空への寄与の大きい順に選ぶ。最も大きいライトの skyLightCullRatio 倍未満は使わない
+        //(ほぼ見えない弱いライトが、シェーダーで情報落ちを起こしてちらつくのを防ぐ。強いライトは変えない)
+        float effLimit = skyLightEffMax * skyLightCullRatio;
+        int count = 0;
+        float totalFlux = 0f; //選んだライトの大気上端の放射束の合計
+        for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+        {
+            int best = -1;
+            float bestEff = 0f;
+            for (int i = 0; i < L_lightObj.Length; i++)
+            {
+                if (skyLightEff[i] <= bestEff || skyLightEff[i] < effLimit) { continue; }
+
+                bool isSelected = false;
+                for (int m = 0; m < count; m++)
+                {
+                    if (skyLightIdx[m] == i) { isSelected = true; break; }
+                }
+                if (isSelected) { continue; }
+
+                best = i;
+                bestEff = skyLightEff[i];
+            }
+
+            if (best == -1) { break; }
+
+            skyLightIdx[count] = best;
+            totalFlux += L_flux[best];
+            count++;
+        }
+
+        sky.SetFloat("_Density", Mathf.Max(atmOpacity, 0f));
+        sky.SetFloat("_LightCount", count);
+        for (int k = 0; k < MAX_LIGHT_SOURCE; k++)
+        {
+            if (k < count)
+            {
+                int i = skyLightIdx[k];
+                sky.SetVector(skyProp_lightVector[k], L_lightVector[i]);
+                sky.SetColor(skyProp_skyLightColor[k], L_lightColor_top[i]);
+                sky.SetFloat(skyProp_lightIntensity[k], L_flux[i] / totalFlux); //構成比
+            }
+            else
+            {
+                sky.SetFloat(skyProp_lightIntensity[k], 0f);
+            }
+        }
+        sky.SetFloat("_Brightness", count > 0 ? skyLightBase * CalcSkyExposure(totalFlux) : 0f);
+
+        ApplyAbsorbLayers(sky);
+    }
+
+    /// <summary>
+    /// StEAtmosphere に吸収層を渡す。層ごとに個別のプロパティ(_AbsorbShell0〜3 / _AbsorbTau0〜3)に入れ、使わない層は 0 にする。
+    /// 層の数は absorbBottom_layer / absorbTop_layer / absorbTau_layer の短い方(最大 MAX_ABSORB_LAYER)
+    /// _AbsorbShell の zw には縁の幅(absorbSoftBottom_layer / absorbSoftTop_layer。足りない番号は0)を、層の厚さの半分までにクランプして入れる
+    /// </summary>
+    private void ApplyAbsorbLayers(Material sky)
+    {
+        //プロパティ名(毎回の文字列連結を避けるため初回だけ作る)
+        if (skyProp_absorbShell == null)
+        {
+            skyProp_absorbShell = new string[MAX_ABSORB_LAYER];
+            skyProp_absorbTau = new string[MAX_ABSORB_LAYER];
+            for (int j = 0; j < MAX_ABSORB_LAYER; j++)
+            {
+                skyProp_absorbShell[j] = "_AbsorbShell" + j;
+                skyProp_absorbTau[j] = "_AbsorbTau" + j;
+            }
+        }
+
+        int n = 0;
+        if (absorbBottom_layer != null && absorbTop_layer != null && absorbTau_layer != null)
+        {
+            n = Mathf.Min(Mathf.Min(absorbBottom_layer.Length, absorbTop_layer.Length), Mathf.Min(absorbTau_layer.Length, MAX_ABSORB_LAYER));
+        }
+
+        for (int j = 0; j < MAX_ABSORB_LAYER; j++)
+        {
+            if (j < n)
+            {
+                Vector3 tau = absorbTau_layer[j];
+                float bottom = absorbBottom_layer[j];
+                float top = absorbTop_layer[j];
+                float halfThick = Mathf.Max(top - bottom, 0f) * 0.5f;
+                float softBottom = (absorbSoftBottom_layer != null && j < absorbSoftBottom_layer.Length) ? absorbSoftBottom_layer[j] : 0f;
+                float softTop = (absorbSoftTop_layer != null && j < absorbSoftTop_layer.Length) ? absorbSoftTop_layer[j] : 0f;
+                softBottom = Mathf.Clamp(softBottom, 0f, halfThick);
+                softTop = Mathf.Clamp(softTop, 0f, halfThick);
+                sky.SetVector(skyProp_absorbShell[j], new Vector4(bottom, top, softBottom, softTop));
+                sky.SetVector(skyProp_absorbTau[j], new Vector4(tau.x, tau.y, tau.z, 0f));
+            }
+            else
+            {
+                sky.SetVector(skyProp_absorbShell[j], Vector4.zero);
+                sky.SetVector(skyProp_absorbTau[j], Vector4.zero);
+            }
+        }
+        sky.SetFloat("_AbsorbLayerCount", n);
+    }
+
+    /// <summary>
+    /// 空(StEAtmosphere)の露出(_Brightness の skyLightBase を除いた部分)。地上のライトと同じ相対ライティング。
+    /// 地上は各ライトに G = LogScaling(F) / F(F は地表の全光量)を掛けているのと同じなので、空も選んだライトの放射束の合計に
+    /// 1つのゲインを掛ける(光源どうしの比 _LightIntensity は変えない。明るい光源だけを弱めると、薄明が消える・月が太陽並みになるなどで破綻する)。
+    /// 順応量 F_adapt = skyAdaptFlux(fluxAllSurface + 空の明るさの見積もり skyDiffuseFlux。CalcSkyLightEff で求め、地上のライト・環境光と共通)。
+    /// 空自身の明るさを含めるので、日没直後に地表の全光量が落ちても、太陽に照らされた空のゲインは上がりすぎない。
+    /// skyAdaptStrength で、順応なし(LogScaling(合計))と順応ありを対数で混ぜる
+    /// </summary>
+    private float CalcSkyExposure(float totalFlux)
+    {
+        //順応なし：候補すべての合計で決めた明るさ(弱いライトを切っても、残ったライトの明るさが変わらないよう、選んだ分の割合を掛ける)
+        float bNoAdapt = skyLightFluxAll > 0f ? LogScaling(skyLightFluxAll) * (totalFlux / skyLightFluxAll) : 0f;
+        if (!atm_isValid || isSkyLightFluxOrder || skyAdaptStrength <= 0f || !(totalFlux > 0f)) { return bNoAdapt; }
+
+        float fAdapt = skyAdaptFlux;
+        if (!(fAdapt > MIN_F)) { return bNoAdapt; }
+
+        float bAdapt = totalFlux * LogScaling(fAdapt) / fAdapt;
+
+        //見える照度の下限(thresholdLx)を下回ったら、地上のライト(GetBelow)と同じく照度に比例して暗くする
+        //(ゲインは空自身の明るさで正規化されるので、これがないとどんなに暗い薄明でも順応後の明るさまで持ち上がる)
+        if (thresholdLx > 0f && skyAdaptLx < thresholdLx) { bAdapt *= Mathf.Max(skyAdaptLx, 0f) / thresholdLx; }
+
+        if (!(bAdapt > 0f) || !(bNoAdapt > 0f)) { return bAdapt > 0f ? bAdapt : 0f; }
+
+        //対数で混ぜる(露出は比で効くので)
+        return Mathf.Pow(bNoAdapt, 1f - skyAdaptStrength) * Mathf.Pow(bAdapt, skyAdaptStrength);
+    }
+
+    /// <summary>
+    /// ライトごとの空への寄与の見積もり skyLightEff(大気上端の放射束 × EstimateSkyLuminance)と、順応量を求める(UpdateLight から呼ぶ。fluxAllSurface を求めた後)。
+    /// skyDiffuseFlux = skyAdaptWeight × Σ skyLightEff(空の明るさ。地表を照らす天空光とみなす)、
+    /// skyAdaptFlux = fluxAllSurface + skyDiffuseFlux、skyAdaptLx はその照度。空の露出と、地上のライト・環境光(isUseSkyAdaptGround)で共通に使う。
+    /// StEAtmosphere を使わないとき・見積もりがすべて0(宇宙から見下ろすときなど)は、skyLightEff を大気上端の放射束にし、skyDiffuseFlux = 0
+    /// </summary>
+    private void CalcSkyLightEff()
+    {
+        int n = L_lightObj.Length;
+        if (skyLightEff == null || skyLightEff.Length != n) { skyLightEff = new float[n]; }
+
+        Material sky = RenderSettings.skybox;
+        bool isEstimate = isUseStEAtmosphere && atm_isValid && sky != null;
+        float mieRatio = isEstimate ? sky.GetFloat("_MieRatio") : 0f;
+        float mieG = isEstimate ? sky.GetFloat("_MieG") : 0f;
+
+        skyLightFluxAll = 0f;
+        skyLightEffMax = 0f;
+        float sumEff = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            skyLightEff[i] = 0f;
+            if (!(L_flux[i] > 0f) || L_lightVector[i] == Vector3.zero) { continue; }
+            skyLightFluxAll += L_flux[i];
+            skyLightEff[i] = isEstimate ? L_flux[i] * EstimateSkyLuminance(L_lightVector[i], mieRatio, mieG) : L_flux[i];
+            if (!(skyLightEff[i] - skyLightEff[i] == 0f)) { skyLightEff[i] = 0f; } //NaN・無限大は0(SanitizeFlux と同じ判定)
+            sumEff += skyLightEff[i];
+            if (skyLightEff[i] > skyLightEffMax) { skyLightEffMax = skyLightEff[i]; }
+        }
+
+        //見積もりがすべて0なら、大気上端の放射束の順で選ぶ(順応はしない)
+        isSkyLightFluxOrder = !isEstimate || !(skyLightEffMax > MIN_F);
+        if (isSkyLightFluxOrder && isEstimate)
+        {
+            skyLightEffMax = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                skyLightEff[i] = (L_flux[i] > 0f && L_lightVector[i] != Vector3.zero) ? L_flux[i] : 0f;
+                if (skyLightEff[i] > skyLightEffMax) { skyLightEffMax = skyLightEff[i]; }
+            }
+        }
+
+        skyDiffuseFlux = isSkyLightFluxOrder ? 0f : skyAdaptWeight * sumEff;
+        skyAdaptFlux = fluxAllSurface + skyDiffuseFlux;
+        skyAdaptLx = fluxAllSurface_lx + skyDiffuseFlux * LX;
+    }
+
+    /// <summary>
+    /// 光源1つ(大気上端の放射束を1とする)が照らす空の明るさの見積もり(輝度の重みの平均)。
+    /// シェーダーの計算を代表点 = 観測者として簡略化したもの(LUT の形・密度の補正・吸収層は省く)。
+    /// 天頂と、光源の方位の地平線の2方向で求め、明るい方を使う(薄明は光源側の地平線が最も明るいため)
+    /// </summary>
+    private float EstimateSkyLuminance(Vector3 lightVec, float mieRatio, float mieG)
+    {
+        if (lightVec == Vector3.zero) { return 0f; }
+        Vector3 l = lightVec.normalized;
+        float cosSun = l.y;
+        float density = Mathf.Max(atmOpacity, 0f);
+
+        //影の境目の高さと、それより上にある空気の割合(シェーダーの ShadowHeight と同じ)
+        float hs = atm_h0;
+        if (cosSun < 0f)
+        {
+            float sinChi = Mathf.Sqrt(Mathf.Clamp01(1f - cosSun * cosSun));
+            hs = Mathf.Max(atm_h0, atm_X / Mathf.Max(sinChi, 1e-4f) - atm_X);
+        }
+        float litRatio = Mathf.Exp(-Mathf.Min(hs - atm_h0, ATM_MAX_EXPONENT));
+        Vector3 sunOptical = atm_tauZ * (density * ChapmanColumn(atm_X, hs, cosSun));
+
+        //天頂(光源との角の cos は cosSun)と、光源の方位の地平線(cos は sin(天頂角))
+        float zenith = SkyDirLuminance(ChapmanColumn(atm_X, atm_h0, 1f), cosSun, density, sunOptical, litRatio, mieRatio, mieG);
+        float cosH = Mathf.Sqrt(Mathf.Clamp01(1f - cosSun * cosSun));
+        float horizon = SkyDirLuminance(ChapmanColumn(atm_X, atm_h0, 0f), cosH, density, sunOptical, litRatio, mieRatio, mieG);
+
+        return Mathf.Max(zenith, horizon);
+    }
+
+    /// <summary>
+    /// 1方向(上向き・地平線の視線。代表点は観測者)の空の明るさ。輝度の重みの平均
+    /// = (1 - e^(-視線の光学的厚さ)) × ((1 - Mie比) × Rayleigh の位相 × Rayleigh の透過率 + Mie比 × Mie の位相 × Mie の透過率)
+    /// Rayleigh の透過率はシェーダーの RayleighTransmittance の上向きの場合(後半だけ)と同じく視線上で積分したもの
+    /// (上空ほど空気が薄く赤化が弱いので、観測者の位置の透過率より明るい)。Mie は観測者(影の境目)の高さでの透過率 × litRatio
+    /// </summary>
+    private float SkyDirLuminance(float viewColumn, float cosTheta, float density, Vector3 sunOptical, float litRatio, float mieRatio, float mieG)
+    {
+        //位相関数(シェーダーの PhaseRayleigh / PhaseMie と同じ。等方散乱を1とした値)
+        float phaseR = (1f - mieRatio) * 0.75f * (1f + cosTheta * cosTheta);
+        float phaseM = mieRatio * (1f - mieG * mieG) / Mathf.Pow(Mathf.Max(1f + mieG * mieG - 2f * mieG * cosTheta, 1e-4f), 1.5f);
+
+        Vector3 opt = atm_tauZ * (density * viewColumn);
+        Vector3 scat = new Vector3(
+            SkyChannel(opt.x, sunOptical.x, litRatio, phaseR, phaseM),
+            SkyChannel(opt.y, sunOptical.y, litRatio, phaseR, phaseM),
+            SkyChannel(opt.z, sunOptical.z, litRatio, phaseR, phaseM));
+        return TransmittanceLuminance(scat);
+    }
+
+    //SkyDirLuminance の1色分。a：視線の光学的厚さ、b：光源方向の光学的厚さ(影の境目の高さ)、us：影の境目より上にある空気の割合
+    private float SkyChannel(float a, float b, float us, float phaseR, float phaseM)
+    {
+        float amount = 1f - Mathf.Exp(-Mathf.Min(a, ATM_MAX_EXPONENT)); //散乱の量
+
+        //Rayleigh：シェーダーの RayleighTransmittance(c = 0, xp = 0)。後半 x ∈ [a(1 - us), a] で太陽側が b → 0 と変わる
+        float usSafe = Mathf.Max(us, 1e-6f);
+        float x0 = Mathf.Clamp(a - us * a, 0f, a);
+        float transR = SegmentScatterF(x0, a, b * ((a - x0) / Mathf.Max(a, 1e-6f)) / usSafe, 0f) / Mathf.Max(amount, 1e-6f);
+
+        //Mie：観測者(影の境目)の高さでの透過率
+        float transM = Mathf.Exp(-Mathf.Min(b, ATM_MAX_EXPONENT)) * us;
+
+        return amount * (phaseR * transR + phaseM * transM);
+    }
+
+    //シェーダーの SegmentScatter の1色分。∫ e^(-x - s(x)) dx(x ∈ [x0, x1]、s は s0 → s1 と線形)
+    private float SegmentScatterF(float x0, float x1, float s0, float s1)
+    {
+        float L = Mathf.Max(x1 - x0, 0f);
+        float E0 = x0 + s0;
+        float E1 = x1 + s1;
+        float dE = E1 - E0;
+        float e0 = Mathf.Exp(-Mathf.Min(E0, ATM_MAX_EXPONENT));
+        float e1 = Mathf.Exp(-Mathf.Min(E1, ATM_MAX_EXPONENT));
+        if (Mathf.Abs(dE) < 1e-4f) { return L * e0; }
+        return L * (e0 - e1) / dE;
+    }
+
     public void UpdateStarMap()
     {
         //starMapMat.SetFloat("_brightness");
@@ -2929,7 +3690,8 @@ public class StarSystemManager : UdonSharpBehaviour
             atmCor = 0;
         }
 
-        starMapMat.SetFloat("_brightness", 1 * (intensityAll * atmCor / intensityBase));
+        //星空は従来どおり地表の全光量で決める(intensityAll は順応量を使うので、ここでは使わない)
+        starMapMat.SetFloat("_brightness", 1 * LogScaling(fluxAllSurface) * atmCor);
         starMapMat.SetVector("_LightVector", currentLightVec);
         //Debug.Log("starBrt" + 1 * (intensityAll * atmCor / intensityBase));
         starMap.SetPropertyBlock(starMapMat);
